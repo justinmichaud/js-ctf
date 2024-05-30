@@ -598,7 +598,6 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
         out.print("\n");
     };
 
-    out.printf("<%p, %s>\n", cell, cell->className().characters());
     IndentationScope scope(indentation);
 
     INDENT dumpSlot(slots, 0, "header");
@@ -615,12 +614,15 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
     if (cell->isObject()) {
         JSObject* obj = static_cast<JSObject*>(const_cast<JSCell*>(cell));
         Butterfly* butterfly = obj->butterfly();
-        size_t butterflySize = obj->butterflyTotalSize();
+
+        // size_t butterflySize = obj->butterflyTotalSize();
 
         INDENT dumpSlot(slots, slotIndex, "butterfly");
         slotIndex++;
 
-        if (butterfly) {
+        if (butterfly && reinterpret_cast<ptrdiff_t>(butterfly) < static_cast<ptrdiff_t>(0x20)) {
+            INDENT out.println("INVALID BUTTERFLY ", format("%p", butterfly));
+        } else if (butterfly) {
             IndentationScope scope(indentation);
 
             bool hasIndexingHeader = structure->hasIndexingHeader(cell);
@@ -635,10 +637,10 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 
             unsigned publicLength = butterfly->publicLength();
             unsigned vectorLength = butterfly->vectorLength();
-            size_t butterflyCellSize = MarkedSpace::optimalSizeFor(butterflySize);
+            // size_t butterflyCellSize = MarkedSpace::optimalSizeFor(butterflySize);
 
-            size_t endOfIndexedPropertiesIndex = butterflySize / sizeof(EncodedJSValue);
-            size_t endOfButterflyIndex = butterflyCellSize / sizeof(EncodedJSValue);
+            // size_t endOfIndexedPropertiesIndex = butterflySize / sizeof(EncodedJSValue);
+            // size_t endOfButterflyIndex = butterflyCellSize / sizeof(EncodedJSValue);
 
             INDENT out.println("base ", RawPointer(base));
             INDENT out.println("hasIndexingHeader ", (hasIndexingHeader ? "YES" : "NO"), " hasAnyArrayStorage ", (hasAnyArrayStorage ? "YES" : "NO"));
@@ -686,8 +688,17 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
                     index = dumpSection(index, index + 2, "arrayStorage");
                 }
 
-                index = dumpSection(index, endOfIndexedPropertiesIndex, "indexedProperties");
-                index = dumpSection(index, endOfButterflyIndex, "unallocated capacity");
+                // index = dumpSection(index, endOfIndexedPropertiesIndex, "indexedProperties");
+                // index = dumpSection(index, endOfButterflyIndex, "unallocated capacity");
+            }
+        }
+
+        if (auto* fn = jsDynamicCast<JSFunction*>(obj)) {
+            auto* exec = fn->executable();
+            out.println("FUNCTION: ", RawPointer(exec));
+            if (exec && jsDynamicCast<const ScriptExecutable*>(exec) && exec->hasJITCodeForCall()) {
+                out.println("EXECUTABLE: ", RawPointer(exec->generatedJITCodeForCall().ptr()));
+                out.println("EXECUTABLE ADDRESS: ", RawPointer(exec->generatedJITCodeForCall()->executableAddress()));
             }
         }
     }

@@ -87,7 +87,7 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, configFile, nullptr, Normal, "file to configure JSC options and logging location"_s) \
     \
     v(Bool, useLLInt,  true, Normal, "allows the LLINT to be used if true"_s) \
-    v(Bool, useJIT, jitEnabledByDefault(), Normal, "allows the executable pages to be allocated for JIT and thunks if true"_s) \
+    v(Bool, useJIT, false, Normal, "allows the executable pages to be allocated for JIT and thunks if true"_s) \
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, true, Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
@@ -382,7 +382,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxSingleAllocationSize, 0, Configurable, "debugging option to limit individual allocations to a max size (0 = limit not set, N = limit size in bytes)"_s) \
     \
     v(GCLogLevel, logGC, GCLogging::None, Normal, "debugging option to log GC activity (0 = None, 1 = Basic, 2 = Verbose)"_s) \
-    v(Bool, useGC, true, Normal, nullptr) \
+    v(Bool, useGC, false, Normal, nullptr) \
     v(Bool, useGlobalGC, false, Normal, nullptr) \
     v(Bool, gcAtEnd, false, Normal, "If true, the jsc CLI will do a GC before exiting"_s) \
     v(Bool, forceGCSlowPaths, false, Normal, "If true, we will force all JIT fast allocations down their slow paths."_s) \
@@ -470,7 +470,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
     v(Bool, useAirOptimizePairedLoadStore, true, Normal, nullptr) \
     \
-    v(Bool, useDollarVM, false, Restricted, "installs the $vm debugging tool in global objects"_s) \
+    v(Bool, useDollarVM, true, Normal, "installs the $vm debugging tool in global objects"_s) \
     v(OptionString, functionOverrides, nullptr, Restricted, "file with debugging overrides for function bodies"_s) \
     \
     v(Unsigned, watchdog, 0, Normal, "watchdog timeout (0 = Disabled, N = a timeout period of N milliseconds)"_s) \

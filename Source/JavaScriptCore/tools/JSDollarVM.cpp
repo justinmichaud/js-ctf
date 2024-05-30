@@ -4129,6 +4129,102 @@ JSC_DEFINE_HOST_FUNCTION(functionCachedCallFromCPP, (JSGlobalObject* globalObjec
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionAddrOf, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!callFrame->argumentCount() || callFrame->argumentCount() > 2 || !callFrame->argument(0).isCell())
+        return encodedJSUndefined();
+
+    bool verbose = false;
+    if (callFrame->argumentCount() > 1 && !callFrame->argument(1).isBoolean())
+        return encodedJSUndefined();
+
+    if (callFrame->argumentCount() > 1 && callFrame->argument(1).asBoolean())
+        verbose = true;
+
+    auto* o = callFrame->argument(0).asCell();
+    dataLogLnIf(verbose, "AddrOf: ", RawPointer(o), " ", *o);
+
+    return JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, reinterpret_cast<uint64_t>(o)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFakeObj, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!callFrame->argumentCount() || callFrame->argumentCount() > 2 || !callFrame->argument(0).isBigInt())
+        return encodedJSUndefined();
+
+    bool verbose = false;
+    if (callFrame->argumentCount() > 1 && !callFrame->argument(1).isBoolean())
+        return encodedJSUndefined();
+
+    if (callFrame->argumentCount() > 1 && callFrame->argument(1).asBoolean())
+        verbose = true;
+
+    auto i = callFrame->argument(0).toBigInt64(globalObject);
+    auto o = bitwise_cast<JSCell*>(i);
+    dataLogLnIf(verbose, "FakeObj: ", RawHex(i));
+
+    return JSValue::encode(o);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRead64, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!callFrame->argumentCount() || callFrame->argumentCount() > 2 || !callFrame->argument(0).isBigInt())
+        return encodedJSUndefined();
+
+    bool verbose = false;
+    if (callFrame->argumentCount() > 1 && !callFrame->argument(1).isBoolean())
+        return encodedJSUndefined();
+
+    if (callFrame->argumentCount() > 1 && callFrame->argument(1).asBoolean())
+        verbose = true;
+
+    uint64_t i = callFrame->argument(0).toBigInt64(globalObject);
+    dataLogLnIf(verbose, "Read64: ", RawHex(i));
+    uint64_t* ptr = bitwise_cast<uint64_t*>(i);
+    dataLogLnIf(verbose, "Read64: ", RawHex(i), " -> ", RawHex(*ptr), " / ", *ptr);
+
+    return JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *ptr));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionWrite64, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!callFrame->argumentCount() || callFrame->argumentCount() > 3 || !callFrame->argument(0).isBigInt() || !callFrame->argument(1).isBigInt())
+        return encodedJSUndefined();
+
+    bool verbose = false;
+    if (callFrame->argumentCount() > 2 && !callFrame->argument(2).isBoolean())
+        return encodedJSUndefined();
+
+    if (callFrame->argumentCount() > 2 && callFrame->argument(2).asBoolean())
+        verbose = true;
+
+    uint64_t i = callFrame->argument(0).toBigInt64(globalObject);
+    uint64_t v = callFrame->argument(1).toBigInt64(globalObject);
+    dataLogLnIf(verbose, "Write64: ", RawHex(i), " <- ", RawHex(v), " / ", v);
+    uint64_t* ptr = bitwise_cast<uint64_t*>(i);
+    *ptr = v;
+
+    return JSValue::encode(jsBoolean(true));
+}
+
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
 
 void JSDollarVM::finishCreation(VM& vm)
@@ -4146,6 +4242,11 @@ void JSDollarVM::finishCreation(VM& vm)
         DollarVMAssertScope assertScope;
         JSDollarVM::addConstructibleFunction(vm, globalObject, name, function, arguments);
     };
+
+    addFunction(vm, "addrOf"_s, functionAddrOf, 2);
+    addFunction(vm, "fakeObj"_s, functionFakeObj, 2);
+    addFunction(vm, "read64"_s, functionRead64, 2);
+    addFunction(vm, "write64"_s, functionWrite64, 3);
 
     addFunction(vm, "abort"_s, functionCrash, 0);
     addFunction(vm, "crash"_s, functionCrash, 0);

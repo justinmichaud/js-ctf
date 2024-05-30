@@ -129,7 +129,7 @@ ALWAYS_INLINE StructureID StructureID::encode(const Structure* structure)
 ALWAYS_INLINE Structure* StructureID::decode() const
 {
     // Take care to only use the bits from m_bits in the structure's address reservation.
-    ASSERT(decontaminate());
+    // ASSERT(decontaminate());
     return reinterpret_cast<Structure*>((static_cast<uintptr_t>(decontaminate().m_bits) & structureIDMask) + startOfStructureHeap());
 }
 

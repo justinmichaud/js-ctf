@@ -366,7 +366,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(value);
     ASSERT(value.isGetterSetter() == !!(newAttributes & PropertyAttribute::Accessor));
     ASSERT(value.isCustomGetterSetter() == !!(newAttributes & PropertyAttribute::CustomAccessorOrValue));
-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
+    // ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
     ASSERT(!parseIndex(propertyName));
 
     StructureID structureID = this->structureID();

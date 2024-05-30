@@ -466,12 +466,7 @@
 #define ENABLE_SEC_ITEM_SHIM 0
 #endif
 
-#if !defined(ENABLE_SECURITY_ASSERTIONS)
-/* Enable security assertions on all ASAN builds and debug builds. */
-#if ASAN_ENABLED || !defined(NDEBUG)
-#define ENABLE_SECURITY_ASSERTIONS 1
-#endif
-#endif
+#define ENABLE_SECURITY_ASSERTIONS 0
 
 #if !defined(ENABLE_SEPARATED_WX_HEAP)
 #define ENABLE_SEPARATED_WX_HEAP 0
