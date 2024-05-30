@@ -1,0 +1,1648 @@
+/*
+ * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#import "config.h"
+#import "WebPageProxy.h"
+
+#if PLATFORM(IOS_FAMILY)
+
+#import "APINavigationAction.h"
+#import "APIPageConfiguration.h"
+#import "APIUIClient.h"
+#import "APIWebsitePolicies.h"
+#import "Connection.h"
+#import "DocumentEditingContext.h"
+#import "DrawingAreaProxy.h"
+#import "EditingRange.h"
+#import "GlobalFindInPageState.h"
+#import "InteractionInformationAtPosition.h"
+#import "Logging.h"
+#import "MessageSenderInlines.h"
+#import "NativeWebKeyboardEvent.h"
+#import "NavigationState.h"
+#import "PageClient.h"
+#import "PaymentAuthorizationViewController.h"
+#import "PrintInfo.h"
+#import "ProvisionalPageProxy.h"
+#import "RemoteLayerTreeHost.h"
+#import "RemoteLayerTreeNode.h"
+#import "RemoteLayerTreeTransaction.h"
+#import "RemoteScrollingCoordinatorProxy.h"
+#import "RevealItem.h"
+#import "TapHandlingResult.h"
+#import "UIKitSPI.h"
+#import "UserData.h"
+#import "VideoPresentationManagerProxy.h"
+#import "ViewUpdateDispatcherMessages.h"
+#import "WKBrowsingContextControllerInternal.h"
+#import "WebAutocorrectionContext.h"
+#import "WebAutocorrectionData.h"
+#import "WebCoreArgumentCoders.h"
+#import "WebPage.h"
+#import "WebPageMessages.h"
+#import "WebPageProxyInternals.h"
+#import "WebProcessMessages.h"
+#import "WebProcessPool.h"
+#import "WebProcessProxy.h"
+#import "WebScreenOrientationManagerProxy.h"
+#import <WebCore/AGXCompilerService.h>
+#import <WebCore/LocalFrameView.h>
+#import <WebCore/NotImplemented.h>
+#import <WebCore/PlatformScreen.h>
+#import <WebCore/Quirks.h>
+#import <WebCore/RuntimeApplicationChecks.h>
+#import <WebCore/ShareableResource.h>
+#import <WebCore/SharedBuffer.h>
+#import <WebCore/UserAgent.h>
+#import <WebCore/ValidationBubble.h>
+#import <pal/spi/ios/MobileGestaltSPI.h>
+#import <pal/system/ios/UserInterfaceIdiom.h>
+#import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#import <wtf/text/TextStream.h>
+
+#if USE(QUICK_LOOK)
+#import "APILoaderClient.h"
+#import "APINavigationClient.h"
+#import <wtf/text/WTFString.h>
+#endif
+
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, process().connection())
+
+#define WEBPAGEPROXY_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [pageProxyID=%llu, webPageID=%llu, PID=%i] WebPageProxy::" fmt, this, identifier().toUInt64(), webPageID().toUInt64(), m_process->processID(), ##__VA_ARGS__)
+
+#if PLATFORM(VISION)
+static constexpr CGFloat kTargetFullscreenAspectRatio = 1.7778;
+#endif
+
+namespace WebKit {
+using namespace WebCore;
+
+void WebPageProxy::platformInitialize()
+{
+    internals().hardwareKeyboardState = currentHardwareKeyboardState();
+}
+
+PlatformDisplayID WebPageProxy::generateDisplayIDFromPageID() const
+{
+    // In order to ensure that we get a unique DisplayRefreshMonitor per-DrawingArea (necessary because DisplayRefreshMonitor
+    // is driven by that class), give each page a unique DisplayID derived from WebPage's unique ID.
+    // FIXME: While using the high end of the range of DisplayIDs makes a collision with real, non-RemoteLayerTreeDrawingArea
+    // DisplayIDs less likely, it is not entirely safe to have a RemoteLayerTreeDrawingArea and TiledCoreAnimationDrawingArea
+    // coeexist in the same process.
+    return std::numeric_limits<uint32_t>::max() - webPageID().toUInt64();
+}
+
+String WebPageProxy::userAgentForURL(const URL&)
+{
+    return userAgent();
+}
+
+String WebPageProxy::standardUserAgent(const String& applicationNameForUserAgent)
+{
+    return standardUserAgentWithApplicationName(applicationNameForUserAgent);
+}
+
+void WebPageProxy::getIsSpeaking(CompletionHandler<void(bool)>&& completionHandler)
+{
+    notImplemented();
+    completionHandler(false);
+}
+
+void WebPageProxy::speak(const String&)
+{
+    notImplemented();
+}
+
+void WebPageProxy::stopSpeaking()
+{
+    notImplemented();
+}
+
+void WebPageProxy::searchTheWeb(const String&)
+{
+    notImplemented();
+}
+
+void WebPageProxy::windowAndViewFramesChanged(const FloatRect&, const FloatPoint&)
+{
+    notImplemented();
+}
+
+String WebPageProxy::stringSelectionForPasteboard()
+{
+    notImplemented();
+    return String();
+}
+
+RefPtr<WebCore::SharedBuffer> WebPageProxy::dataSelectionForPasteboard(const String&)
+{
+    notImplemented();
+    return nullptr;
+}
+
+bool WebPageProxy::readSelectionFromPasteboard(const String&)
+{
+    notImplemented();
+    return false;
+}
+
+void WebPageProxy::requestFocusedElementInformation(CompletionHandler<void(const std::optional<FocusedElementInformation>&)>&& callback)
+{
+    if (!hasRunningProcess())
+        return callback({ });
+
+    sendWithAsyncReply(Messages::WebPage::RequestFocusedElementInformation(), WTFMove(callback));
+}
+
+void WebPageProxy::updateVisibleContentRects(const VisibleContentRectUpdateInfo& visibleContentRectUpdate, bool sendEvenIfUnchanged)
+{
+    if (visibleContentRectUpdate == internals().lastVisibleContentRectUpdate && !sendEvenIfUnchanged)
+        return;
+
+    internals().lastVisibleContentRectUpdate = visibleContentRectUpdate;
+
+    if (!hasRunningProcess())
+        return;
+
+    m_process->send(Messages::ViewUpdateDispatcher::VisibleContentRectUpdate(webPageID(), visibleContentRectUpdate), 0);
+}
+
+void WebPageProxy::resendLastVisibleContentRects()
+{
+    m_process->send(Messages::ViewUpdateDispatcher::VisibleContentRectUpdate(webPageID(), internals().lastVisibleContentRectUpdate), 0);
+}
+
+void WebPageProxy::updateStringForFind(const String& string)
+{
+    if (!hasRunningProcess())
+        return;
+
+    WebKit::updateStringForFind(string);
+}
+
+static inline float adjustedUnexposedEdge(float documentEdge, float exposedRectEdge, float factor)
+{
+    if (exposedRectEdge < documentEdge)
+        return documentEdge - factor * (documentEdge - exposedRectEdge);
+    
+    return exposedRectEdge;
+}
+
+static inline float adjustedUnexposedMaxEdge(float documentEdge, float exposedRectEdge, float factor)
+{
+    if (exposedRectEdge > documentEdge)
+        return documentEdge + factor * (exposedRectEdge - documentEdge);
+    
+    return exposedRectEdge;
+}
+
+WebCore::FloatRect WebPageProxy::computeLayoutViewportRect(const FloatRect& unobscuredContentRect, const FloatRect& unobscuredContentRectRespectingInputViewBounds, const FloatRect& currentLayoutViewportRect, double displayedContentScale, LayoutViewportConstraint constraint) const
+{
+    FloatRect constrainedUnobscuredRect = unobscuredContentRect;
+    FloatRect documentRect = protectedPageClient()->documentRect();
+
+    if (constraint == LayoutViewportConstraint::ConstrainedToDocumentRect)
+        constrainedUnobscuredRect.intersect(documentRect);
+
+    double minimumScale = protectedPageClient()->minimumZoomScale();
+    bool isBelowMinimumScale = displayedContentScale < minimumScale && !WebKit::scalesAreEssentiallyEqual(displayedContentScale, minimumScale);
+    if (isBelowMinimumScale) {
+        const CGFloat slope = 12;
+        CGFloat factor = std::max<CGFloat>(1 - slope * (minimumScale - displayedContentScale), 0);
+
+        constrainedUnobscuredRect.setX(adjustedUnexposedEdge(documentRect.x(), constrainedUnobscuredRect.x(), factor));
+        constrainedUnobscuredRect.setY(adjustedUnexposedEdge(documentRect.y(), constrainedUnobscuredRect.y(), factor));
+        constrainedUnobscuredRect.setWidth(adjustedUnexposedMaxEdge(documentRect.maxX(), constrainedUnobscuredRect.maxX(), factor) - constrainedUnobscuredRect.x());
+        constrainedUnobscuredRect.setHeight(adjustedUnexposedMaxEdge(documentRect.maxY(), constrainedUnobscuredRect.maxY(), factor) - constrainedUnobscuredRect.y());
+    }
+
+    FloatSize constrainedSize = isBelowMinimumScale ? constrainedUnobscuredRect.size() : unobscuredContentRect.size();
+    FloatRect unobscuredContentRectForViewport = isBelowMinimumScale ? constrainedUnobscuredRect : unobscuredContentRectRespectingInputViewBounds;
+
+    auto layoutViewportSize = LocalFrameView::expandedLayoutViewportSize(internals().baseLayoutViewportSize, LayoutSize(documentRect.size()), m_preferences->layoutViewportHeightExpansionFactor());
+    FloatRect layoutViewportRect = LocalFrameView::computeUpdatedLayoutViewportRect(LayoutRect(currentLayoutViewportRect), LayoutRect(documentRect), LayoutSize(constrainedSize), LayoutRect(unobscuredContentRectForViewport), layoutViewportSize, internals().minStableLayoutViewportOrigin, internals().maxStableLayoutViewportOrigin, constraint);
+    
+    if (layoutViewportRect != currentLayoutViewportRect)
+        LOG_WITH_STREAM(VisibleRects, stream << "WebPageProxy::computeLayoutViewportRect: new layout viewport  " << layoutViewportRect);
+    return layoutViewportRect;
+}
+
+FloatRect WebPageProxy::unconstrainedLayoutViewportRect() const
+{
+    return computeLayoutViewportRect(unobscuredContentRect(), unobscuredContentRectRespectingInputViewBounds(), layoutViewportRect(), displayedContentScale(), LayoutViewportConstraint::Unconstrained);
+}
+
+void WebPageProxy::scrollingNodeScrollViewWillStartPanGesture(ScrollingNodeID nodeID)
+{
+    protectedPageClient()->scrollingNodeScrollViewWillStartPanGesture(nodeID);
+}
+
+void WebPageProxy::scrollingNodeScrollWillStartScroll(std::optional<ScrollingNodeID> nodeID)
+{
+    protectedPageClient()->scrollingNodeScrollWillStartScroll(nodeID.value_or(ScrollingNodeID { }));
+}
+
+void WebPageProxy::scrollingNodeScrollDidEndScroll(std::optional<ScrollingNodeID> nodeID)
+{
+    protectedPageClient()->scrollingNodeScrollDidEndScroll(nodeID.value_or(ScrollingNodeID { }));
+}
+
+void WebPageProxy::dynamicViewportSizeUpdate(const DynamicViewportSizeUpdate& target)
+{
+    if (!hasRunningProcess())
+        return;
+    hideValidationMessage();
+    internals().viewportConfigurationViewLayoutSize = target.viewLayoutSize;
+    internals().defaultUnobscuredSize = target.maximumUnobscuredSize;
+    internals().minimumUnobscuredSize = target.minimumUnobscuredSize;
+    internals().maximumUnobscuredSize = target.maximumUnobscuredSize;
+    m_process->send(Messages::WebPage::DynamicViewportSizeUpdate(target), webPageID());
+    setDeviceOrientation(target.deviceOrientation);
+}
+
+void WebPageProxy::setViewportConfigurationViewLayoutSize(const WebCore::FloatSize& size, double scaleFactor, double minimumEffectiveDeviceWidth)
+{
+    internals().viewportConfigurationViewLayoutSize = size;
+    m_viewportConfigurationLayoutSizeScaleFactor = scaleFactor;
+    m_viewportConfigurationMinimumEffectiveDeviceWidth = minimumEffectiveDeviceWidth;
+
+    if (m_provisionalPage)
+        m_provisionalPage->send(Messages::WebPage::SetViewportConfigurationViewLayoutSize(size, scaleFactor, minimumEffectiveDeviceWidth));
+    if (hasRunningProcess())
+        m_process->send(Messages::WebPage::SetViewportConfigurationViewLayoutSize(size, scaleFactor, minimumEffectiveDeviceWidth), webPageID());
+}
+
+void WebPageProxy::setSceneIdentifier(String&& sceneIdentifier)
+{
+    if (hasRunningProcess())
+        m_process->send(Messages::WebPage::SetSceneIdentifier(WTFMove(sceneIdentifier)), webPageID());
+}
+
+void WebPageProxy::setForceAlwaysUserScalable(bool userScalable)
+{
+    if (m_forceAlwaysUserScalable == userScalable)
+        return;
+    m_forceAlwaysUserScalable = userScalable;
+
+    if (hasRunningProcess())
+        m_process->send(Messages::WebPage::SetForceAlwaysUserScalable(userScalable), webPageID());
+}
+
+WebCore::ScreenOrientationType WebPageProxy::toScreenOrientationType(IntDegrees angle)
+{
+    if (angle == -90)
+        return WebCore::ScreenOrientationType::LandscapeSecondary;
+    if (angle == 180)
+        return WebCore::ScreenOrientationType::PortraitSecondary;
+    if (angle == 90)
+        return WebCore::ScreenOrientationType::LandscapePrimary;
+    return WebCore::ScreenOrientationType::PortraitPrimary;
+}
+
+void WebPageProxy::setDeviceOrientation(IntDegrees deviceOrientation)
+{
+    if (m_screenOrientationManager)
+        m_screenOrientationManager->setCurrentOrientation(toScreenOrientationType(deviceOrientation));
+
+    if (deviceOrientation != m_deviceOrientation) {
+        m_deviceOrientation = deviceOrientation;
+        if (hasRunningProcess())
+            m_process->send(Messages::WebPage::SetDeviceOrientation(deviceOrientation), webPageID());
+    }
+}
+
+void WebPageProxy::setOverrideViewportArguments(const std::optional<ViewportArguments>& viewportArguments)
+{
+    if (viewportArguments == internals().overrideViewportArguments)
+        return;
+    internals().overrideViewportArguments = viewportArguments;
+    if (hasRunningProcess())
+        m_process->send(Messages::WebPage::SetOverrideViewportArguments(viewportArguments), webPageID());
+}
+
+bool WebPageProxy::updateLayoutViewportParameters(const RemoteLayerTreeTransaction& layerTreeTransaction)
+{
+    if (internals().baseLayoutViewportSize == layerTreeTransaction.baseLayoutViewportSize()
+        && internals().minStableLayoutViewportOrigin == layerTreeTransaction.minStableLayoutViewportOrigin()
+        && internals().maxStableLayoutViewportOrigin == layerTreeTransaction.maxStableLayoutViewportOrigin())
+        return false;
+    internals().baseLayoutViewportSize = layerTreeTransaction.baseLayoutViewportSize();
+    internals().minStableLayoutViewportOrigin = layerTreeTransaction.minStableLayoutViewportOrigin();
+    internals().maxStableLayoutViewportOrigin = layerTreeTransaction.maxStableLayoutViewportOrigin();
+    LOG_WITH_STREAM(VisibleRects, stream << "WebPageProxy::updateLayoutViewportParameters: baseLayoutViewportSize: " << internals().baseLayoutViewportSize << " minStableLayoutViewportOrigin: " << internals().minStableLayoutViewportOrigin << " maxStableLayoutViewportOrigin: " << internals().maxStableLayoutViewportOrigin);
+    return true;
+}
+
+void WebPageProxy::selectWithGesture(IntPoint point, GestureType gestureType, GestureRecognizerState gestureState, bool isInteractingWithFocusedElement, CompletionHandler<void(const IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&& callback)
+{
+    if (!hasRunningProcess())
+        return callback({ }, GestureType::Loupe, GestureRecognizerState::Possible, { });
+
+    sendWithAsyncReply(Messages::WebPage::SelectWithGesture(point, gestureType, gestureState, isInteractingWithFocusedElement), WTFMove(callback));
+}
+
+void WebPageProxy::updateSelectionWithTouches(IntPoint point, SelectionTouch touches, bool baseIsStart, CompletionHandler<void(const WebCore::IntPoint&, SelectionTouch, OptionSet<SelectionFlags>)>&& callback)
+{
+    if (!hasRunningProcess())
+        return callback(WebCore::IntPoint(), SelectionTouch::Started, { });
+
+    sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithTouches(point, touches, baseIsStart), WTFMove(callback));
+}
+
+void WebPageProxy::willInsertFinalDictationResult()
+{
+    m_process->send(Messages::WebPage::WillInsertFinalDictationResult(), webPageID());
+}
+
+void WebPageProxy::didInsertFinalDictationResult()
+{
+    m_process->send(Messages::WebPage::DidInsertFinalDictationResult(), webPageID());
+}
+
+void WebPageProxy::replaceDictatedText(const String& oldText, const String& newText)
+{
+    m_process->send(Messages::WebPage::ReplaceDictatedText(oldText, newText), webPageID());
+}
+
+void WebPageProxy::replaceSelectedText(const String& oldText, const String& newText)
+{
+    m_process->send(Messages::WebPage::ReplaceSelectedText(oldText, newText), webPageID());
+}
+
+void WebPageProxy::requestAutocorrectionData(const String& textForAutocorrection, CompletionHandler<void(WebAutocorrectionData)>&& callback)
+{
+    if (!hasRunningProcess()) {
+        callback({ });
+        return;
+    }
+    sendWithAsyncReply(Messages::WebPage::RequestAutocorrectionData(textForAutocorrection), WTFMove(callback));
+}
+
+void WebPageProxy::applyAutocorrection(const String& correction, const String& originalText, bool isCandidate, CompletionHandler<void(const String&)>&& callback)
+{
+    sendWithAsyncReply(Messages::WebPage::ApplyAutocorrection(correction, originalText, isCandidate), WTFMove(callback));
+}
+
+bool WebPageProxy::applyAutocorrection(const String& correction, const String& originalText, bool isCandidate)
+{
+    auto sendSync = m_process->sendSync(Messages::WebPage::SyncApplyAutocorrection(correction, originalText, isCandidate), webPageID());
+    auto [autocorrectionApplied] = sendSync.takeReplyOr(false);
+    return autocorrectionApplied;
+}
+
+void WebPageProxy::selectTextWithGranularityAtPoint(const WebCore::IntPoint point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, CompletionHandler<void()>&& callbackFunction)
+{
+    if (!hasRunningProcess()) {
+        callbackFunction();
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::SelectTextWithGranularityAtPoint(point, granularity, isInteractingWithFocusedElement), [callbackFunction = WTFMove(callbackFunction), backgroundActivity = m_process->throttler().backgroundActivity("WebPageProxy::selectTextWithGranularityAtPoint"_s)] () mutable {
+        callbackFunction();
+    });
+}
+
+void WebPageProxy::selectPositionAtBoundaryWithDirection(const WebCore::IntPoint point, WebCore::TextGranularity granularity, WebCore::SelectionDirection direction, bool isInteractingWithFocusedElement, CompletionHandler<void()>&& callbackFunction)
+{
+    if (!hasRunningProcess()) {
+        callbackFunction();
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::SelectPositionAtBoundaryWithDirection(point, granularity, direction, isInteractingWithFocusedElement), [callbackFunction = WTFMove(callbackFunction), backgroundActivity = m_process->throttler().backgroundActivity("WebPageProxy::selectPositionAtBoundaryWithDirection"_s)] () mutable {
+        callbackFunction();
+    });
+}
+
+void WebPageProxy::moveSelectionAtBoundaryWithDirection(WebCore::TextGranularity granularity, WebCore::SelectionDirection direction, CompletionHandler<void()>&& callbackFunction)
+{
+    if (!hasRunningProcess()) {
+        callbackFunction();
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::MoveSelectionAtBoundaryWithDirection(granularity, direction), [callbackFunction = WTFMove(callbackFunction), backgroundActivity = m_process->throttler().backgroundActivity("WebPageProxy::moveSelectionAtBoundaryWithDirection"_s)] () mutable {
+        callbackFunction();
+    });
+}
+
+void WebPageProxy::selectPositionAtPoint(const WebCore::IntPoint point, bool isInteractingWithFocusedElement, CompletionHandler<void()>&& callbackFunction)
+{
+    if (!hasRunningProcess()) {
+        callbackFunction();
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::SelectPositionAtPoint(point, isInteractingWithFocusedElement), [callbackFunction = WTFMove(callbackFunction), backgroundActivity = m_process->throttler().backgroundActivity("WebPageProxy::selectPositionAtPoint"_s)] () mutable {
+        callbackFunction();
+    });
+}
+
+void WebPageProxy::beginSelectionInDirection(WebCore::SelectionDirection direction, CompletionHandler<void(bool)>&& callback)
+{
+    sendWithAsyncReply(Messages::WebPage::BeginSelectionInDirection(direction), WTFMove(callback));
+}
+
+void WebPageProxy::updateSelectionWithExtentPoint(const WebCore::IntPoint point, bool isInteractingWithFocusedElement, RespectSelectionAnchor respectSelectionAnchor, CompletionHandler<void(bool)>&& callback)
+{
+    sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithExtentPoint(point, isInteractingWithFocusedElement, respectSelectionAnchor), WTFMove(callback));
+}
+
+void WebPageProxy::updateSelectionWithExtentPointAndBoundary(const WebCore::IntPoint point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, CompletionHandler<void(bool)>&& callback)
+{
+    sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithExtentPointAndBoundary(point, granularity, isInteractingWithFocusedElement), WTFMove(callback));
+}
+
+#if ENABLE(REVEAL)
+void WebPageProxy::requestRVItemInCurrentSelectedRange(CompletionHandler<void(const WebKit::RevealItem&)>&& callbackFunction)
+{
+    if (!hasRunningProcess())
+        return callbackFunction(RevealItem());
+
+    sendWithAsyncReply(Messages::WebPage::RequestRVItemInCurrentSelectedRange(), WTFMove(callbackFunction));
+}
+
+void WebPageProxy::prepareSelectionForContextMenuWithLocationInView(IntPoint point, CompletionHandler<void(bool, const RevealItem&)>&& callbackFunction)
+{
+    if (!hasRunningProcess())
+        return callbackFunction(false, RevealItem());
+
+    dispatchAfterCurrentContextMenuEvent([weakThis = WeakPtr { *this }, point, callbackFunction = WTFMove(callbackFunction)] (bool handled) mutable {
+        if (!weakThis || handled) {
+            callbackFunction(false, RevealItem());
+            return;
+        }
+
+        weakThis->sendWithAsyncReply(Messages::WebPage::PrepareSelectionForContextMenuWithLocationInView(point), WTFMove(callbackFunction));
+    });
+}
+#endif
+
+void WebPageProxy::requestAutocorrectionContext()
+{
+    m_process->send(Messages::WebPage::HandleAutocorrectionContextRequest(), webPageID());
+}
+
+void WebPageProxy::handleAutocorrectionContext(const WebAutocorrectionContext& context)
+{
+    protectedPageClient()->handleAutocorrectionContext(context);
+}
+
+void WebPageProxy::getSelectionContext(CompletionHandler<void(const String&, const String&, const String&)>&& callbackFunction)
+{
+    if (!hasRunningProcess())
+        return callbackFunction({ }, { }, { });
+    sendWithAsyncReply(Messages::WebPage::GetSelectionContext(), WTFMove(callbackFunction));
+}
+
+void WebPageProxy::handleTwoFingerTapAtPoint(const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, WebKit::TapIdentifier requestID)
+{
+    send(Messages::WebPage::HandleTwoFingerTapAtPoint(point, modifiers, requestID));
+}
+
+void WebPageProxy::selectWithTwoTouches(const WebCore::IntPoint from, const WebCore::IntPoint to, GestureType gestureType, GestureRecognizerState gestureState, CompletionHandler<void(const WebCore::IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&& callback)
+{
+    if (!hasRunningProcess())
+        return callback({ }, GestureType::Loupe, GestureRecognizerState::Possible, { });
+
+    sendWithAsyncReply(Messages::WebPage::SelectWithTwoTouches(from, to, gestureType, gestureState), WTFMove(callback));
+}
+
+void WebPageProxy::didReceivePositionInformation(const InteractionInformationAtPosition& info)
+{
+    protectedPageClient()->positionInformationDidChange(info);
+}
+
+void WebPageProxy::requestPositionInformation(const InteractionInformationRequest& request)
+{
+    m_process->send(Messages::WebPage::RequestPositionInformation(request), webPageID());
+}
+
+void WebPageProxy::startInteractionWithPositionInformation(const InteractionInformationAtPosition& positionInformation)
+{
+    m_process->send(Messages::WebPage::StartInteractionWithElementContextOrPosition(positionInformation.elementContext, positionInformation.request.point), webPageID());
+}
+
+void WebPageProxy::stopInteraction()
+{
+    m_process->send(Messages::WebPage::StopInteraction(), webPageID());
+}
+
+bool WebPageProxy::isValidPerformActionOnElementAuthorizationToken(const String& authorizationToken) const
+{
+    return !authorizationToken.isNull() && m_performActionOnElementAuthTokens.contains(authorizationToken);
+}
+
+void WebPageProxy::performActionOnElement(uint32_t action)
+{
+    auto authorizationToken = createVersion4UUIDString();
+
+    m_performActionOnElementAuthTokens.add(authorizationToken);
+    
+    sendWithAsyncReply(Messages::WebPage::PerformActionOnElement(action, authorizationToken), [weakThis = WeakPtr { *this }, authorizationToken] () mutable {
+        if (!weakThis)
+            return;
+
+        ASSERT(weakThis->isValidPerformActionOnElementAuthorizationToken(authorizationToken));
+        weakThis->m_performActionOnElementAuthTokens.remove(authorizationToken);
+    });
+}
+
+void WebPageProxy::performActionOnElements(uint32_t action, Vector<WebCore::ElementContext>&& elements)
+{
+    m_process->send(Messages::WebPage::PerformActionOnElements(action, elements), webPageID());
+}
+
+void WebPageProxy::saveImageToLibrary(SharedMemory::Handle&& imageHandle, const String& authorizationToken)
+{
+    MESSAGE_CHECK(isValidPerformActionOnElementAuthorizationToken(authorizationToken));
+
+    auto sharedMemoryBuffer = SharedMemory::map(WTFMove(imageHandle), SharedMemory::Protection::ReadOnly);
+    if (!sharedMemoryBuffer)
+        return;
+
+    auto buffer = sharedMemoryBuffer->createSharedBuffer(sharedMemoryBuffer->size());
+    protectedPageClient()->saveImageToLibrary(WTFMove(buffer));
+}
+
+void WebPageProxy::applicationDidEnterBackground()
+{
+    m_lastObservedStateWasBackground = true;
+
+    bool isSuspendedUnderLock = UIApplication.sharedApplication.isSuspendedUnderLock;
+    
+    WEBPAGEPROXY_RELEASE_LOG(ViewState, "applicationDidEnterBackground: isSuspendedUnderLock? %d", isSuspendedUnderLock);
+
+#if !PLATFORM(WATCHOS)
+    // We normally delay process suspension when the app is backgrounded until the current page load completes. However,
+    // we do not want to do so when the screen is locked for power reasons.
+    if (isSuspendedUnderLock) {
+        if (auto* navigationState = NavigationState::fromWebPage(*this))
+            navigationState->releaseNetworkActivity(NavigationState::NetworkActivityReleaseReason::ScreenLocked);
+    }
+#endif
+    m_process->send(Messages::WebPage::ApplicationDidEnterBackground(isSuspendedUnderLock), webPageID());
+}
+
+void WebPageProxy::applicationDidFinishSnapshottingAfterEnteringBackground()
+{
+    if (m_drawingArea) {
+        m_drawingArea->prepareForAppSuspension();
+        m_drawingArea->hideContentUntilPendingUpdate();
+    }
+    m_process->send(Messages::WebPage::ApplicationDidFinishSnapshottingAfterEnteringBackground(), webPageID());
+}
+
+void WebPageProxy::applicationWillEnterForeground()
+{
+    m_lastObservedStateWasBackground = false;
+
+    bool isSuspendedUnderLock = UIApplication.sharedApplication.isSuspendedUnderLock;
+    WEBPAGEPROXY_RELEASE_LOG(ViewState, "applicationWillEnterForeground: isSuspendedUnderLock? %d", isSuspendedUnderLock);
+
+    m_process->send(Messages::WebPage::ApplicationWillEnterForeground(isSuspendedUnderLock), webPageID());
+
+    hardwareKeyboardAvailabilityChanged();
+}
+
+void WebPageProxy::applicationWillResignActive()
+{
+    m_process->send(Messages::WebPage::ApplicationWillResignActive(), webPageID());
+}
+
+void WebPageProxy::applicationDidEnterBackgroundForMedia()
+{
+    bool isSuspendedUnderLock = UIApplication.sharedApplication.isSuspendedUnderLock;
+    WEBPAGEPROXY_RELEASE_LOG(ViewState, "applicationWillEnterForegroundForMedia: isSuspendedUnderLock? %d", isSuspendedUnderLock);
+
+    m_process->send(Messages::WebPage::ApplicationDidEnterBackgroundForMedia(isSuspendedUnderLock), webPageID());
+}
+
+void WebPageProxy::applicationWillEnterForegroundForMedia()
+{
+    bool isSuspendedUnderLock = UIApplication.sharedApplication.isSuspendedUnderLock;
+    WEBPAGEPROXY_RELEASE_LOG(ViewState, "applicationWillEnterForegroundForMedia: isSuspendedUnderLock? %d", isSuspendedUnderLock);
+
+    m_process->send(Messages::WebPage::ApplicationWillEnterForegroundForMedia(isSuspendedUnderLock), webPageID());
+}
+
+void WebPageProxy::applicationDidBecomeActive()
+{
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    if (m_videoPresentationManager)
+        m_videoPresentationManager->applicationDidBecomeActive();
+#endif
+    m_process->send(Messages::WebPage::ApplicationDidBecomeActive(), webPageID());
+}
+
+void WebPageProxy::extendSelection(WebCore::TextGranularity granularity, CompletionHandler<void()>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::WebPage::ExtendSelection(granularity), [completionHandler = WTFMove(completionHandler)]() mutable {
+        if (completionHandler)
+            completionHandler();
+    });
+}
+
+void WebPageProxy::selectWordBackward()
+{
+    m_process->send(Messages::WebPage::SelectWordBackward(), webPageID());
+}
+
+void WebPageProxy::extendSelectionForReplacement(CompletionHandler<void()>&& completion)
+{
+    sendWithAsyncReply(Messages::WebPage::ExtendSelectionForReplacement(), WTFMove(completion));
+}
+
+void WebPageProxy::requestRectsForGranularityWithSelectionOffset(WebCore::TextGranularity granularity, uint32_t offset, CompletionHandler<void(const Vector<WebCore::SelectionGeometry>&)>&& callback)
+{
+    if (!hasRunningProcess())
+        return callback({ });
+    
+    sendWithAsyncReply(Messages::WebPage::GetRectsForGranularityWithSelectionOffset(granularity, offset), WTFMove(callback));
+}
+
+void WebPageProxy::requestRectsAtSelectionOffsetWithText(int32_t offset, const String& text, CompletionHandler<void(const Vector<WebCore::SelectionGeometry>&)>&& callback)
+{
+    if (!hasRunningProcess())
+        return callback({ });
+    
+    sendWithAsyncReply(Messages::WebPage::GetRectsAtSelectionOffsetWithText(offset, text), WTFMove(callback));
+}
+
+void WebPageProxy::storeSelectionForAccessibility(bool shouldStore)
+{
+    m_process->send(Messages::WebPage::StoreSelectionForAccessibility(shouldStore), webPageID());
+}
+
+void WebPageProxy::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow)
+{
+    m_process->send(Messages::WebPage::StartAutoscrollAtPosition(positionInWindow), webPageID());
+}
+
+void WebPageProxy::cancelAutoscroll()
+{
+    m_process->send(Messages::WebPage::CancelAutoscroll(), webPageID());
+}
+
+void WebPageProxy::moveSelectionByOffset(int32_t offset, CompletionHandler<void()>&& callbackFunction)
+{
+    if (!hasRunningProcess()) {
+        callbackFunction();
+        return;
+    }
+    
+    sendWithAsyncReply(Messages::WebPage::MoveSelectionByOffset(offset), [callbackFunction = WTFMove(callbackFunction), backgroundActivity = m_process->throttler().backgroundActivity("WebPageProxy::moveSelectionByOffset"_s)] () mutable {
+        callbackFunction();
+    });
+}
+
+void WebPageProxy::interpretKeyEvent(const EditorState& state, bool isCharEvent, CompletionHandler<void(bool)>&& completionHandler)
+{
+    updateEditorState(state);
+    if (!hasQueuedKeyEvent())
+        completionHandler(false);
+    else
+        completionHandler(protectedPageClient()->interpretKeyEvent(firstQueuedKeyEvent(), isCharEvent));
+}
+
+void WebPageProxy::setSmartInsertDeleteEnabled(bool)
+{
+    notImplemented();
+}
+
+void WebPageProxy::registerWebProcessAccessibilityToken(std::span<const uint8_t> data, FrameIdentifier frameID)
+{
+    pageClient().accessibilityWebProcessTokenReceived(data, frameID, messageSenderConnection()->remoteProcessID());
+}
+
+void WebPageProxy::relayAccessibilityNotification(const String& notificationName, std::span<const uint8_t> data)
+{
+    NSData *notificationData = [NSData dataWithBytes:data.data() length:data.size()];
+    protectedPageClient()->relayAccessibilityNotification(notificationName, notificationData);
+}
+
+void WebPageProxy::assistiveTechnologyMakeFirstResponder()
+{
+    protectedPageClient()->assistiveTechnologyMakeFirstResponder();
+}
+
+void WebPageProxy::makeFirstResponder()
+{
+    notImplemented();
+}
+
+void WebPageProxy::registerUIProcessAccessibilityTokens(std::span<const uint8_t> elementToken, std::span<const uint8_t> windowToken)
+{
+    if (!hasRunningProcess())
+        return;
+    
+    send(Messages::WebPage::RegisterUIProcessAccessibilityTokens(elementToken, windowToken));
+}
+
+void WebPageProxy::executeSavedCommandBySelector(const String&, CompletionHandler<void(bool)>&& completionHandler)
+{
+    notImplemented();
+    completionHandler(false);
+}
+
+bool WebPageProxy::shouldDelayWindowOrderingForEvent(const WebKit::WebMouseEvent&)
+{
+    notImplemented();
+    return false;
+}
+
+void WebPageProxy::willStartUserTriggeredZooming()
+{
+    send(Messages::WebPage::WillStartUserTriggeredZooming());
+}
+
+void WebPageProxy::potentialTapAtPosition(const WebCore::FloatPoint& position, bool shouldRequestMagnificationInformation, WebKit::TapIdentifier requestID)
+{
+    hideValidationMessage();
+    send(Messages::WebPage::PotentialTapAtPosition(requestID, position, shouldRequestMagnificationInformation));
+}
+
+void WebPageProxy::commitPotentialTap(OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastTouchStart, WebCore::PointerID pointerId)
+{
+    send(Messages::WebPage::CommitPotentialTap(modifiers, layerTreeTransactionIdAtLastTouchStart, pointerId));
+}
+
+void WebPageProxy::cancelPotentialTap()
+{
+    send(Messages::WebPage::CancelPotentialTap());
+}
+
+void WebPageProxy::tapHighlightAtPosition(const WebCore::FloatPoint& position, WebKit::TapIdentifier requestID)
+{
+    send(Messages::WebPage::TapHighlightAtPosition(requestID, position));
+}
+
+void WebPageProxy::attemptSyntheticClick(const FloatPoint& location, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastTouchStart)
+{
+    send(Messages::WebPage::AttemptSyntheticClick(roundedIntPoint(location), modifiers, layerTreeTransactionIdAtLastTouchStart));
+}
+
+void WebPageProxy::didRecognizeLongPress()
+{
+    send(Messages::WebPage::DidRecognizeLongPress());
+}
+
+void WebPageProxy::handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastTouchStart)
+{
+    send(Messages::WebPage::HandleDoubleTapForDoubleClickAtPoint(point, modifiers, layerTreeTransactionIdAtLastTouchStart));
+}
+
+void WebPageProxy::inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint& position)
+{
+    send(Messages::WebPage::InspectorNodeSearchMovedToPosition(position));
+}
+
+void WebPageProxy::inspectorNodeSearchEndedAtPosition(const WebCore::FloatPoint& position)
+{
+    send(Messages::WebPage::InspectorNodeSearchEndedAtPosition(position));
+}
+
+void WebPageProxy::blurFocusedElement()
+{
+    send(Messages::WebPage::BlurFocusedElement());
+}
+
+FloatSize WebPageProxy::screenSize()
+{
+    return WebCore::screenSize();
+}
+
+#if PLATFORM(VISION)
+static FloatSize fullscreenPreferencesScreenSize(CGFloat preferredWidth)
+{
+    CGFloat preferredHeight = preferredWidth / kTargetFullscreenAspectRatio;
+    return FloatSize(CGSizeMake(preferredWidth, preferredHeight));
+}
+#endif
+
+FloatSize WebPageProxy::availableScreenSize()
+{
+#if PLATFORM(VISION)
+    if (PAL::currentUserInterfaceIdiomIsVision())
+        return fullscreenPreferencesScreenSize(m_preferences->mediaPreferredFullscreenWidth());
+#endif
+    return WebCore::availableScreenSize();
+}
+
+FloatSize WebPageProxy::overrideScreenSize()
+{
+#if PLATFORM(VISION)
+    if (PAL::currentUserInterfaceIdiomIsVision())
+        return fullscreenPreferencesScreenSize(m_preferences->mediaPreferredFullscreenWidth());
+#endif
+    return WebCore::overrideScreenSize();
+}
+
+FloatSize WebPageProxy::overrideAvailableScreenSize()
+{
+#if PLATFORM(VISION)
+    if (PAL::currentUserInterfaceIdiomIsVision())
+        return fullscreenPreferencesScreenSize(m_preferences->mediaPreferredFullscreenWidth());
+#endif
+    return WebCore::overrideAvailableScreenSize();
+}
+
+float WebPageProxy::textAutosizingWidth()
+{
+    return WebCore::screenSize().width();
+}
+
+void WebPageProxy::couldNotRestorePageState()
+{
+    protectedPageClient()->couldNotRestorePageState();
+}
+
+void WebPageProxy::restorePageState(std::optional<WebCore::FloatPoint> scrollPosition, const WebCore::FloatPoint& scrollOrigin, const WebCore::FloatBoxExtent& obscuredInsetsOnSave, double scale)
+{
+    MESSAGE_CHECK(scale > 0);
+    protectedPageClient()->restorePageState(scrollPosition, scrollOrigin, obscuredInsetsOnSave, scale);
+}
+
+void WebPageProxy::restorePageCenterAndScale(std::optional<WebCore::FloatPoint> center, double scale)
+{
+    MESSAGE_CHECK(scale > 0);
+    protectedPageClient()->restorePageCenterAndScale(center, scale);
+}
+
+void WebPageProxy::didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color& color, const Vector<WebCore::FloatQuad>& highlightedQuads, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling)
+{
+    protectedPageClient()->didGetTapHighlightGeometries(requestID, color, highlightedQuads, topLeftRadius, topRightRadius, bottomLeftRadius, bottomRightRadius, nodeHasBuiltInClickHandling);
+}
+
+void WebPageProxy::setIsShowingInputViewForFocusedElement(bool showingInputView)
+{
+    send(Messages::WebPage::SetIsShowingInputViewForFocusedElement(showingInputView));
+}
+
+void WebPageProxy::updateInputContextAfterBlurringAndRefocusingElement()
+{
+    protectedPageClient()->updateInputContextAfterBlurringAndRefocusingElement();
+}
+
+void WebPageProxy::elementDidFocus(const FocusedElementInformation& information, bool userIsInteracting, bool blurPreviousNode, OptionSet<WebCore::ActivityState> activityStateChanges, const UserData& userData)
+{
+    m_pendingInputModeChange = std::nullopt;
+
+    API::Object* userDataObject = process().transformHandlesToObjects(userData.object()).get();
+    protectedPageClient()->elementDidFocus(information, userIsInteracting, blurPreviousNode, activityStateChanges, userDataObject);
+}
+
+void WebPageProxy::elementDidBlur()
+{
+    m_pendingInputModeChange = std::nullopt;
+    protectedPageClient()->elementDidBlur();
+}
+
+void WebPageProxy::updateFocusedElementInformation(const FocusedElementInformation& information)
+{
+    protectedPageClient()->updateFocusedElementInformation(information);
+}
+
+void WebPageProxy::focusedElementDidChangeInputMode(WebCore::InputMode mode)
+{
+#if ENABLE(TOUCH_EVENTS)
+    if (internals().touchEventTracking.isTrackingAnything()) {
+        m_pendingInputModeChange = mode;
+        return;
+    }
+#endif
+
+    protectedPageClient()->focusedElementDidChangeInputMode(mode);
+}
+
+void WebPageProxy::didReleaseAllTouchPoints()
+{
+    if (!m_pendingInputModeChange)
+        return;
+
+    protectedPageClient()->focusedElementDidChangeInputMode(*m_pendingInputModeChange);
+    m_pendingInputModeChange = std::nullopt;
+}
+
+void WebPageProxy::autofillLoginCredentials(const String& username, const String& password)
+{
+    m_process->send(Messages::WebPage::AutofillLoginCredentials(username, password), webPageID());
+}
+
+void WebPageProxy::showInspectorHighlight(const WebCore::InspectorOverlay::Highlight& highlight)
+{
+    protectedPageClient()->showInspectorHighlight(highlight);
+}
+
+void WebPageProxy::hideInspectorHighlight()
+{
+    protectedPageClient()->hideInspectorHighlight();
+}
+
+void WebPageProxy::showInspectorIndication()
+{
+    protectedPageClient()->showInspectorIndication();
+}
+
+void WebPageProxy::hideInspectorIndication()
+{
+    protectedPageClient()->hideInspectorIndication();
+}
+
+void WebPageProxy::enableInspectorNodeSearch()
+{
+    protectedPageClient()->enableInspectorNodeSearch();
+}
+
+void WebPageProxy::disableInspectorNodeSearch()
+{
+    protectedPageClient()->disableInspectorNodeSearch();
+}
+
+void WebPageProxy::focusNextFocusedElement(bool isForward, CompletionHandler<void()>&& callbackFunction)
+{
+    if (!hasRunningProcess()) {
+        callbackFunction();
+        return;
+    }
+    
+    sendWithAsyncReply(Messages::WebPage::FocusNextFocusedElement(isForward), [callbackFunction = WTFMove(callbackFunction), backgroundActivity = m_process->throttler().backgroundActivity("WebPageProxy::focusNextFocusedElement"_s)] () mutable {
+        callbackFunction();
+    });
+}
+
+void WebPageProxy::setFocusedElementValue(const WebCore::ElementContext& context, const String& value)
+{
+    send(Messages::WebPage::SetFocusedElementValue(context, value));
+}
+
+void WebPageProxy::setFocusedElementSelectedIndex(const WebCore::ElementContext& context, uint32_t index, bool allowMultipleSelection)
+{
+    send(Messages::WebPage::SetFocusedElementSelectedIndex(context, index, allowMultipleSelection));
+}
+
+void WebPageProxy::didPerformDictionaryLookup(const DictionaryPopupInfo& dictionaryPopupInfo)
+{
+    protectedPageClient()->didPerformDictionaryLookup(dictionaryPopupInfo);
+}
+
+void WebPageProxy::setRemoteLayerTreeRootNode(RemoteLayerTreeNode* rootNode)
+{
+    protectedPageClient()->setRemoteLayerTreeRootNode(rootNode);
+    m_frozenRemoteLayerTreeHost = nullptr;
+}
+
+void WebPageProxy::showPlaybackTargetPicker(bool hasVideo, const IntRect& elementRect, WebCore::RouteSharingPolicy policy, const String& contextUID)
+{
+    protectedPageClient()->showPlaybackTargetPicker(hasVideo, elementRect, policy, contextUID);
+}
+
+void WebPageProxy::commitPotentialTapFailed()
+{
+    protectedPageClient()->commitPotentialTapFailed();
+}
+
+void WebPageProxy::didNotHandleTapAsClick(const WebCore::IntPoint& point)
+{
+    protectedPageClient()->didNotHandleTapAsClick(point);
+    m_uiClient->didNotHandleTapAsClick(point);
+}
+
+void WebPageProxy::didHandleTapAsHover()
+{
+    protectedPageClient()->didHandleTapAsHover();
+}
+
+void WebPageProxy::didCompleteSyntheticClick()
+{
+    protectedPageClient()->didCompleteSyntheticClick();
+}
+
+void WebPageProxy::disableDoubleTapGesturesDuringTapIfNecessary(WebKit::TapIdentifier requestID)
+{
+    protectedPageClient()->disableDoubleTapGesturesDuringTapIfNecessary(requestID);
+}
+
+void WebPageProxy::handleSmartMagnificationInformationForPotentialTap(WebKit::TapIdentifier requestID, const WebCore::FloatRect& renderRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale, bool nodeIsRootLevel)
+{
+    protectedPageClient()->handleSmartMagnificationInformationForPotentialTap(requestID, renderRect, fitEntireRect, viewportMinimumScale, viewportMaximumScale, nodeIsRootLevel);
+}
+
+size_t WebPageProxy::computePagesForPrintingiOS(FrameIdentifier frameID, const PrintInfo& printInfo)
+{
+    ASSERT_WITH_MESSAGE(!printInfo.snapshotFirstPage, "If we are just snapshotting the first page, we don't need a synchronous message to determine the page count, which is 1.");
+
+    if (!hasRunningProcess())
+        return 0;
+
+    auto sendResult = sendSync(Messages::WebPage::ComputePagesForPrintingiOS(frameID, printInfo), Seconds::infinity());
+    auto [pageCount] = sendResult.takeReplyOr(0);
+    return pageCount;
+}
+
+IPC::Connection::AsyncReplyID WebPageProxy::drawToPDFiOS(FrameIdentifier frameID, const PrintInfo& printInfo, size_t pageCount, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler({ });
+        return { };
+    }
+
+    return sendWithAsyncReply(Messages::WebPage::DrawToPDFiOS(frameID, printInfo, pageCount), WTFMove(completionHandler));
+}
+
+IPC::Connection::AsyncReplyID WebPageProxy::drawToImage(FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler({ });
+        return { };
+    }
+
+    return sendWithAsyncReply(Messages::WebPage::DrawToImage(frameID, printInfo), WTFMove(completionHandler));
+}
+
+void WebPageProxy::contentSizeCategoryDidChange(const String& contentSizeCategory)
+{
+    send(Messages::WebPage::ContentSizeCategoryDidChange(contentSizeCategory));
+}
+
+void WebPageProxy::generateSyntheticEditingCommand(WebKit::SyntheticEditingCommandType command)
+{
+    if (!hasRunningProcess())
+        return;
+
+    send(Messages::WebPage::GenerateSyntheticEditingCommand(command));
+}
+
+void WebPageProxy::didUpdateEditorState(const EditorState& oldEditorState, const EditorState& newEditorState)
+{
+    bool couldChangeSecureInputState = newEditorState.isInPasswordField != oldEditorState.isInPasswordField || oldEditorState.selectionIsNone;
+    
+    // Selection being none is a temporary state when editing. Flipping secure input state too quickly was causing trouble (not fully understood).
+    if (couldChangeSecureInputState && !newEditorState.selectionIsNone)
+        protectedPageClient()->updateSecureInputState();
+    
+    if (newEditorState.shouldIgnoreSelectionChanges)
+        return;
+    
+    updateFontAttributesAfterEditorStateChange();
+    // We always need to notify the client on iOS to make sure the selection is redrawn,
+    // even during composition to support phrase boundary gesture.
+    protectedPageClient()->selectionDidChange();
+}
+
+void WebPageProxy::dispatchDidUpdateEditorState()
+{
+    if (!m_waitingForPostLayoutEditorStateUpdateAfterFocusingElement || !editorState().hasPostLayoutData())
+        return;
+
+    protectedPageClient()->didUpdateEditorState();
+    m_waitingForPostLayoutEditorStateUpdateAfterFocusingElement = false;
+}
+
+void WebPageProxy::showValidationMessage(const IntRect& anchorClientRect, const String& message)
+{
+    m_validationBubble = protectedPageClient()->createValidationBubble(message, { m_preferences->minimumFontSize() });
+
+    // FIXME: When in element fullscreen, UIClient::presentingViewController() may not return the
+    // WKFullScreenViewController even though that is the presenting view controller of the WKWebView.
+    // We should call PageClientImpl::presentingViewController() instead.
+    m_validationBubble->setAnchorRect(anchorClientRect, uiClient().presentingViewController());
+
+    // If we are currently doing a scrolling / zoom animation, then we'll delay showing the validation
+    // bubble until the animation is over.
+    if (!m_isScrollingOrZooming)
+        m_validationBubble->show();
+}
+
+void WebPageProxy::setIsScrollingOrZooming(bool isScrollingOrZooming)
+{
+    m_isScrollingOrZooming = isScrollingOrZooming;
+
+    // We finished doing the scrolling / zoom animation so we can now show the validation
+    // bubble if we're supposed to.
+    if (!m_isScrollingOrZooming && m_validationBubble)
+        m_validationBubble->show();
+}
+
+void WebPageProxy::hardwareKeyboardAvailabilityChanged()
+{
+    auto hardwareKeyboardState = currentHardwareKeyboardState();
+    if (hardwareKeyboardState == internals().hardwareKeyboardState)
+        return;
+
+    internals().hardwareKeyboardState = hardwareKeyboardState;
+
+    protectedPageClient()->hardwareKeyboardAvailabilityChanged();
+
+    updateCurrentModifierState();
+    m_process->send(Messages::WebPage::HardwareKeyboardAvailabilityChanged(hardwareKeyboardState), webPageID());
+}
+
+void WebPageProxy::requestEvasionRectsAboveSelection(CompletionHandler<void(const Vector<WebCore::FloatRect>&)>&& callback)
+{
+    if (!hasRunningProcess()) {
+        callback({ });
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::RequestEvasionRectsAboveSelection(), WTFMove(callback));
+}
+
+void WebPageProxy::updateSelectionWithDelta(int64_t locationDelta, int64_t lengthDelta, CompletionHandler<void()>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler();
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::UpdateSelectionWithDelta(locationDelta, lengthDelta), WTFMove(completionHandler));
+}
+
+WebCore::FloatRect WebPageProxy::selectionBoundingRectInRootViewCoordinates() const
+{
+    if (editorState().selectionIsNone)
+        return { };
+
+    if (!editorState().hasVisualData())
+        return { };
+
+    WebCore::FloatRect bounds;
+    auto& visualData = *editorState().visualData;
+    if (editorState().selectionIsRange) {
+        for (auto& geometry : visualData.selectionGeometries)
+            bounds.unite(geometry.rect());
+    } else
+        bounds = visualData.caretRectAtStart;
+
+    return bounds;
+}
+
+void WebPageProxy::requestDocumentEditingContext(WebKit::DocumentEditingContextRequest&& request, CompletionHandler<void(WebKit::DocumentEditingContext&&)>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler({ });
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::RequestDocumentEditingContext(WTFMove(request)), WTFMove(completionHandler));
+}
+
+#if ENABLE(DRAG_SUPPORT)
+
+void WebPageProxy::didHandleDragStartRequest(bool started)
+{
+    protectedPageClient()->didHandleDragStartRequest(started);
+}
+
+void WebPageProxy::didHandleAdditionalDragItemsRequest(bool added)
+{
+    protectedPageClient()->didHandleAdditionalDragItemsRequest(added);
+}
+
+void WebPageProxy::requestDragStart(const WebCore::IntPoint& clientPosition, const WebCore::IntPoint& globalPosition, OptionSet<WebCore::DragSourceAction> allowedActionsMask)
+{
+    if (hasRunningProcess())
+        m_process->send(Messages::WebPage::RequestDragStart(clientPosition, globalPosition, allowedActionsMask), webPageID());
+}
+
+void WebPageProxy::requestAdditionalItemsForDragSession(const IntPoint& clientPosition, const IntPoint& globalPosition, OptionSet<WebCore::DragSourceAction> allowedActionsMask)
+{
+    if (hasRunningProcess())
+        m_process->send(Messages::WebPage::RequestAdditionalItemsForDragSession(clientPosition, globalPosition, allowedActionsMask), webPageID());
+}
+
+void WebPageProxy::insertDroppedImagePlaceholders(const Vector<IntSize>& imageSizes, CompletionHandler<void(const Vector<IntRect>&, std::optional<WebCore::TextIndicatorData>)>&& completionHandler)
+{
+    if (hasRunningProcess())
+        sendWithAsyncReply(Messages::WebPage::InsertDroppedImagePlaceholders(imageSizes), WTFMove(completionHandler));
+    else
+        completionHandler({ }, std::nullopt);
+}
+
+void WebPageProxy::willReceiveEditDragSnapshot()
+{
+    protectedPageClient()->willReceiveEditDragSnapshot();
+}
+
+void WebPageProxy::didReceiveEditDragSnapshot(std::optional<TextIndicatorData> data)
+{
+    protectedPageClient()->didReceiveEditDragSnapshot(data);
+}
+
+void WebPageProxy::didConcludeDrop()
+{
+    m_process->send(Messages::WebPage::DidConcludeDrop(), webPageID());
+}
+
+#endif
+
+#if USE(QUICK_LOOK)
+
+void WebPageProxy::didStartLoadForQuickLookDocumentInMainFrame(const String& fileName, const String& uti)
+{
+    // Ensure that fileName isn't really a path name
+    static_assert(notFound + 1 == 0, "The following line assumes WTF::notFound equals -1");
+    m_navigationClient->didStartLoadForQuickLookDocumentInMainFrame(fileName.substring(fileName.reverseFind('/') + 1), uti);
+}
+
+void WebPageProxy::didFinishLoadForQuickLookDocumentInMainFrame(ShareableResource::Handle&& handle)
+{
+    auto buffer = WTFMove(handle).tryWrapInSharedBuffer();
+    if (!buffer)
+        return;
+
+    m_navigationClient->didFinishLoadForQuickLookDocumentInMainFrame(*buffer);
+}
+
+void WebPageProxy::requestPasswordForQuickLookDocumentInMainFrame(const String& fileName, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    requestPasswordForQuickLookDocumentInMainFrameShared(fileName, WTFMove(completionHandler));
+}
+
+void WebPageProxy::requestPasswordForQuickLookDocumentInMainFrameShared(const String& fileName, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    protectedPageClient()->requestPasswordForQuickLookDocument(fileName, WTFMove(completionHandler));
+}
+
+#endif
+
+#if ENABLE(APPLE_PAY)
+
+std::unique_ptr<PaymentAuthorizationPresenter> WebPageProxy::Internals::paymentCoordinatorAuthorizationPresenter(WebPaymentCoordinatorProxy& paymentCoordinatorProxy, PKPaymentRequest *paymentRequest)
+{
+    return makeUnique<PaymentAuthorizationViewController>(paymentCoordinatorProxy, paymentRequest);
+}
+
+UIViewController *WebPageProxy::Internals::paymentCoordinatorPresentingViewController(const WebPaymentCoordinatorProxy&)
+{
+    // FIXME: When in element fullscreen, UIClient::presentingViewController() may not return the
+    // WKFullScreenViewController even though that is the presenting view controller of the WKWebView.
+    // We should call PageClientImpl::presentingViewController() instead.
+    return page.uiClient().presentingViewController();
+}
+
+const String& WebPageProxy::Internals::paymentCoordinatorCTDataConnectionServiceType(const WebPaymentCoordinatorProxy&)
+{
+    return page.websiteDataStore().configuration().dataConnectionServiceType();
+}
+
+#endif
+
+#if ENABLE(APPLE_PAY) && ENABLE(APPLE_PAY_REMOTE_UI_USES_SCENE)
+
+void WebPageProxy::Internals::getWindowSceneAndBundleIdentifierForPaymentPresentation(WebPageProxyIdentifier, CompletionHandler<void(const String&, const String&)>&& completionHandler)
+{
+    ASSERT_NOT_REACHED();
+    completionHandler(nullString(), nullString());
+}
+
+#endif
+
+static bool desktopClassBrowsingSupported()
+{
+    static bool supportsDesktopClassBrowsing = false;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        supportsDesktopClassBrowsing = !PAL::currentUserInterfaceIdiomIsSmallScreen();
+    });
+    return supportsDesktopClassBrowsing;
+}
+
+#if !PLATFORM(MACCATALYST)
+
+static bool webViewSizeIsNarrow(WebCore::IntSize viewSize)
+{
+    return !viewSize.isEmpty() && viewSize.width() <= 375;
+}
+
+#endif // !PLATFORM(MACCATALYST)
+
+enum class RecommendDesktopClassBrowsingForRequest { No, Yes, Auto };
+static RecommendDesktopClassBrowsingForRequest desktopClassBrowsingRecommendedForRequest(const WebCore::ResourceRequest& request)
+{
+    // FIXME: This should be additionally gated on site-specific quirks being enabled.
+    // See also: <rdar://problem/50035167>.
+    // The list of domain names is currently available in Source/WebCore/page/Quirks.cpp
+    if (Quirks::needsIPadMiniUserAgent(request.url()))
+        return RecommendDesktopClassBrowsingForRequest::No;
+
+    if (Quirks::needsIPhoneUserAgent(request.url()))
+        return RecommendDesktopClassBrowsingForRequest::No;
+
+    return RecommendDesktopClassBrowsingForRequest::Auto;
+}
+
+bool WebPageProxy::isDesktopClassBrowsingRecommended(const WebCore::ResourceRequest& request) const
+{
+    auto desktopClassBrowsingRecommendation = desktopClassBrowsingRecommendedForRequest(request);
+    if (desktopClassBrowsingRecommendation == RecommendDesktopClassBrowsingForRequest::Yes)
+        return true;
+
+    if (desktopClassBrowsingRecommendation == RecommendDesktopClassBrowsingForRequest::No)
+        return false;
+
+#if !PLATFORM(MACCATALYST)
+    if (!protectedPageClient()->hasResizableWindows() && webViewSizeIsNarrow(viewSize()))
+        return false;
+#endif
+
+    static bool shouldRecommendDesktopClassBrowsing = false;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+#if PLATFORM(MACCATALYST)
+        shouldRecommendDesktopClassBrowsing = desktopClassBrowsingSupported();
+#else
+        // While desktop-class browsing is supported on all iPad models, it is not recommended for iPad mini.
+        auto screenClass = MGGetSInt32Answer(kMGQMainScreenClass, MGScreenClassPad2);
+        shouldRecommendDesktopClassBrowsing = screenClass != MGScreenClassPad3 && screenClass != MGScreenClassPad4 && desktopClassBrowsingSupported();
+#endif
+        if (!m_navigationClient->shouldBypassContentModeSafeguards() && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ModernCompabilityModeByDefault)) {
+            // Opt out apps that haven't yet built against the iOS 13 SDK to limit any incompatibilities as a result of enabling desktop-class browsing by default in
+            // WKWebView on appropriately-sized iPad models.
+            shouldRecommendDesktopClassBrowsing = false;
+        }
+    });
+    return shouldRecommendDesktopClassBrowsing;
+}
+
+bool WebPageProxy::useDesktopClassBrowsing(const API::WebsitePolicies& policies, const WebCore::ResourceRequest& request) const
+{
+    switch (policies.preferredContentMode()) {
+    case WebContentMode::Recommended: {
+        return isDesktopClassBrowsingRecommended(request);
+    }
+    case WebContentMode::Mobile:
+        return false;
+    case WebContentMode::Desktop:
+        return !policies.allowSiteSpecificQuirksToOverrideContentMode() || desktopClassBrowsingRecommendedForRequest(request) != RecommendDesktopClassBrowsingForRequest::No;
+    default:
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+}
+
+String WebPageProxy::predictedUserAgentForRequest(const WebCore::ResourceRequest& request) const
+{
+    if (!customUserAgent().isEmpty())
+        return customUserAgent();
+
+    const API::WebsitePolicies& policies = m_configuration->defaultWebsitePolicies();
+    if (!policies.customUserAgent().isEmpty())
+        return policies.customUserAgent();
+
+    if (policies.applicationNameForDesktopUserAgent().isEmpty())
+        return userAgent();
+
+    if (!useDesktopClassBrowsing(policies, request))
+        return userAgent();
+
+    return standardUserAgentWithApplicationName(policies.applicationNameForDesktopUserAgent(), emptyString(), UserAgentType::Desktop);
+}
+
+WebContentMode WebPageProxy::effectiveContentModeAfterAdjustingPolicies(API::WebsitePolicies& policies, const WebCore::ResourceRequest& request)
+{
+    if (m_preferences->mediaSourceEnabled()) {
+        // FIXME: This is a compatibility hack to ensure that turning MSE on via the existing preference still enables MSE.
+        policies.setMediaSourcePolicy(WebsiteMediaSourcePolicy::Enable);
+    }
+
+    if (Quirks::needsIPhoneUserAgent(request.url())) {
+        policies.setCustomUserAgent(makeStringByReplacingAll(standardUserAgentWithApplicationName(m_applicationNameForUserAgent), "iPad"_s, "iPhone"_s));
+        policies.setCustomNavigatorPlatform("iPhone"_s);
+        return WebContentMode::Mobile;
+    }
+
+    bool useDesktopBrowsingMode = useDesktopClassBrowsing(policies, request);
+
+    m_preferFasterClickOverDoubleTap = false;
+
+    if (!useDesktopBrowsingMode) {
+        policies.setIdempotentModeAutosizingOnlyHonorsPercentages(true);
+        return WebContentMode::Mobile;
+    }
+
+    if (policies.customUserAgent().isEmpty() && customUserAgent().isEmpty()) {
+        auto applicationName = policies.applicationNameForDesktopUserAgent();
+        if (applicationName.isEmpty())
+            applicationName = applicationNameForDesktopUserAgent();
+        policies.setCustomUserAgent(standardUserAgentWithApplicationName(applicationName, emptyString(), UserAgentType::Desktop));
+    }
+
+    if (policies.customNavigatorPlatform().isEmpty()) {
+        // FIXME: Grab this from WebCore instead of hard-coding it here.
+        policies.setCustomNavigatorPlatform("MacIntel"_s);
+    }
+
+    if (desktopClassBrowsingSupported()) {
+        // Apply some additional desktop-class browsing behaviors on supported devices.
+        policies.setMetaViewportPolicy(WebsiteMetaViewportPolicy::Ignore);
+        policies.setMediaSourcePolicy(WebsiteMediaSourcePolicy::Enable);
+        policies.setSimulatedMouseEventsDispatchPolicy(WebsiteSimulatedMouseEventsDispatchPolicy::Allow);
+        policies.setLegacyOverflowScrollingTouchPolicy(WebsiteLegacyOverflowScrollingTouchPolicy::Disable);
+        m_preferFasterClickOverDoubleTap = true;
+    }
+
+    return WebContentMode::Desktop;
+}
+
+void WebPageProxy::textInputContextsInRect(FloatRect rect, CompletionHandler<void(const Vector<ElementContext>&)>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler({ });
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::TextInputContextsInRect(rect), WTFMove(completionHandler));
+}
+
+void WebPageProxy::focusTextInputContextAndPlaceCaret(const ElementContext& context, const IntPoint& point, CompletionHandler<void(bool)>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler(false);
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::FocusTextInputContextAndPlaceCaret(context, point), WTFMove(completionHandler));
+}
+
+void WebPageProxy::setShouldRevealCurrentSelectionAfterInsertion(bool shouldRevealCurrentSelectionAfterInsertion)
+{
+    if (hasRunningProcess())
+        send(Messages::WebPage::SetShouldRevealCurrentSelectionAfterInsertion(shouldRevealCurrentSelectionAfterInsertion));
+}
+
+void WebPageProxy::setScreenIsBeingCaptured(bool captured)
+{
+    if (hasRunningProcess())
+        send(Messages::WebPage::SetScreenIsBeingCaptured(captured));
+}
+
+void WebPageProxy::willOpenAppLink()
+{
+    if (m_processActivityState.hasValidOpeningAppLinkActivity())
+        return;
+
+    // We take a background activity for 25 seconds when switching to another app via an app link in case the WebPage
+    // needs to run script to pass information to the native app.
+    // We chose 25 seconds because the system only gives us 30 seconds and we don't want to get too close to that limit
+    // to avoid assertion invalidation (or even termination).
+    m_processActivityState.takeOpeningAppLinkActivity();
+    WorkQueue::main().dispatchAfter(25_s, [weakThis = WeakPtr { *this }] {
+        if (weakThis)
+            weakThis->m_processActivityState.dropOpeningAppLinkActivity();
+    });
+}
+
+void WebPageProxy::processWillBecomeSuspended()
+{
+    if (!hasRunningProcess())
+        return;
+
+    m_hasNetworkRequestsOnSuspended = pageLoadState().networkRequestsInProgress();
+    if (m_hasNetworkRequestsOnSuspended)
+        setNetworkRequestsInProgress(false);
+}
+
+void WebPageProxy::processWillBecomeForeground()
+{
+    if (!hasRunningProcess())
+        return;
+
+    if (m_hasNetworkRequestsOnSuspended) {
+        setNetworkRequestsInProgress(true);
+        m_hasNetworkRequestsOnSuspended = false;
+    }
+}
+
+#if PLATFORM(MACCATALYST)
+
+void WebPageProxy::Internals::isUserFacingChanged(bool isUserFacing)
+{
+    if (!isUserFacing)
+        page.suspendAllMediaPlayback([] { });
+    else
+        page.resumeAllMediaPlayback([] { });
+}
+
+#endif
+
+void WebPageProxy::willPerformPasteCommand(DOMPasteAccessCategory pasteAccessCategory, std::optional<FrameIdentifier> frameID)
+{
+    switch (pasteAccessCategory) {
+    case DOMPasteAccessCategory::General:
+    case DOMPasteAccessCategory::Fonts:
+        grantAccessToCurrentPasteboardData(UIPasteboardNameGeneral, frameID);
+        return;
+    }
+}
+
+void WebPageProxy::setDeviceHasAGXCompilerServiceForTesting() const
+{
+    WebCore::setDeviceHasAGXCompilerServiceForTesting();
+}
+
+void WebPageProxy::showDataDetectorsUIForPositionInformation(const InteractionInformationAtPosition& positionInfo)
+{
+    protectedPageClient()->showDataDetectorsUIForPositionInformation(positionInfo);
+}
+
+void WebPageProxy::insertionPointColorDidChange()
+{
+    send(Messages::WebPage::SetInsertionPointColor(protectedPageClient()->insertionPointColor()));
+}
+
+Color WebPageProxy::platformUnderPageBackgroundColor() const
+{
+    if (auto contentViewBackgroundColor = protectedPageClient()->contentViewBackgroundColor(); contentViewBackgroundColor.isValid())
+        return contentViewBackgroundColor;
+
+    return WebCore::Color::white;
+}
+
+void WebPageProxy::statusBarWasTapped()
+{
+#if PLATFORM(IOS) || PLATFORM(VISION)
+    RELEASE_LOG_INFO(WebRTC, "WebPageProxy::statusBarWasTapped");
+
+#if USE(APPLE_INTERNAL_SDK)
+    UIApplication *app = UIApplication.sharedApplication;
+    if (!app.supportsMultipleScenes && app.applicationState != UIApplicationStateActive)
+        [[LSApplicationWorkspace defaultWorkspace] openApplicationWithBundleID:[[NSBundle mainBundle] bundleIdentifier]];
+#endif
+
+    m_uiClient->statusBarWasTapped();
+#endif
+}
+
+double WebPageProxy::displayedContentScale() const
+{
+    return internals().lastVisibleContentRectUpdate.scale();
+}
+
+const FloatRect& WebPageProxy::exposedContentRect() const
+{
+    return internals().lastVisibleContentRectUpdate.exposedContentRect();
+}
+
+const FloatRect& WebPageProxy::unobscuredContentRect() const
+{
+    return internals().lastVisibleContentRectUpdate.unobscuredContentRect();
+}
+
+bool WebPageProxy::inStableState() const
+{
+    return internals().lastVisibleContentRectUpdate.inStableState();
+}
+
+const FloatRect& WebPageProxy::unobscuredContentRectRespectingInputViewBounds() const
+{
+    return internals().lastVisibleContentRectUpdate.unobscuredContentRectRespectingInputViewBounds();
+}
+
+const FloatRect& WebPageProxy::layoutViewportRect() const
+{
+    return internals().lastVisibleContentRectUpdate.layoutViewportRect();
+}
+
+FloatSize WebPageProxy::viewLayoutSize() const
+{
+    return internals().viewportConfigurationViewLayoutSize;
+}
+
+#if ENABLE(DRAG_SUPPORT)
+
+void WebPageProxy::setPromisedDataForImage(const String&, SharedMemory::Handle&&, const String&, const String&, const String&, const String&, const String&, SharedMemory::Handle&&, const String&)
+{
+    notImplemented();
+}
+
+#endif
+
+} // namespace WebKit
+
+#undef WEBPAGEPROXY_RELEASE_LOG
+#undef MESSAGE_CHECK
+
+#endif // PLATFORM(IOS_FAMILY)
