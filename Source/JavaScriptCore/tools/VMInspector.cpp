@@ -121,9 +121,10 @@ VM* VMInspector::vmForCallFrame(CallFrame* callFrame)
     Locker lock { inspector.getLock() };
 
     auto isOnVMStack = [] (VM& vm, CallFrame* callFrame) -> bool {
-        void* stackBottom = vm.stackPointerAtVMEntry(); // high memory
-        void* stackTop = vm.stackLimit(); // low memory
-        return stackBottom > callFrame && callFrame > stackTop;
+    	return true;
+        (void) vm; (void) callFrame;//void* stackBottom = vm.stackPointerAtVMEntry(); // high memory
+        //void* stackTop = vm.stackLimit(); // low memory
+        //return stackBottom > callFrame && callFrame > stackTop;
     };
 
     if (m_recentVM && isOnVMStack(*m_recentVM, callFrame))

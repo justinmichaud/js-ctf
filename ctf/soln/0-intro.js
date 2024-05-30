@@ -46,10 +46,10 @@ function tierUp(o) {
 }
 
 const offsetMap = new Map([
-    ["JSFunction::executableOrRareData", 24n],
-    ["FunctionExecutable::m_unlinkedExecutable", 88n],
+    ["JSFunction::executableOrRareData", 20n],
+    ["FunctionExecutable::m_unlinkedExecutable", 60n],
     ["ExecutableBase::m_jitCodeForCall", 8n],
-    ["JITCode::executableAddress", 24n],
+    ["JITCode::executableAddress", 20n],
 ])
 function offset(field) {
     if (!offsetMap.has(field))

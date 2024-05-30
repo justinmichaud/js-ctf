@@ -4170,8 +4170,11 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeObj, (JSGlobalObject* globalObject, CallFra
         verbose = true;
 
     auto i = callFrame->argument(0).toBigInt64(globalObject);
-    auto o = bitwise_cast<JSCell*>(i);
     dataLogLnIf(verbose, "FakeObj: ", RawHex(i));
+    
+    auto o = jsNull();
+    o.u.asBits.tag = JSValue::CellTag;
+    o.u.asBits.payload = (int) i;
 
     return JSValue::encode(o);
 }
@@ -4194,7 +4197,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRead64, (JSGlobalObject* globalObject, CallFram
 
     uint64_t i = callFrame->argument(0).toBigInt64(globalObject);
     dataLogLnIf(verbose, "Read64: ", RawHex(i));
-    uint64_t* ptr = bitwise_cast<uint64_t*>(i);
+    uint64_t* ptr = bitwise_cast<uint64_t*>((int)i);
     dataLogLnIf(verbose, "Read64: ", RawHex(i), " -> ", RawHex(*ptr), " / ", *ptr);
 
     return JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *ptr));
@@ -4219,7 +4222,7 @@ JSC_DEFINE_HOST_FUNCTION(functionWrite64, (JSGlobalObject* globalObject, CallFra
     uint64_t i = callFrame->argument(0).toBigInt64(globalObject);
     uint64_t v = callFrame->argument(1).toBigInt64(globalObject);
     dataLogLnIf(verbose, "Write64: ", RawHex(i), " <- ", RawHex(v), " / ", v);
-    uint64_t* ptr = bitwise_cast<uint64_t*>(i);
+    uint64_t* ptr = bitwise_cast<uint64_t*>((int)i);
     *ptr = v;
 
     return JSValue::encode(jsBoolean(true));
