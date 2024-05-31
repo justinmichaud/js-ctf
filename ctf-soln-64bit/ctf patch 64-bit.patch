@@ -1,0 +1,289 @@
+diff --git a/Source/JavaScriptCore/runtime/JSCast.h b/Source/JavaScriptCore/runtime/JSCast.h
+index 45ca4ed4ba40..38bb6ca2b055 100644
+--- a/Source/JavaScriptCore/runtime/JSCast.h
++++ b/Source/JavaScriptCore/runtime/JSCast.h
+@@ -33,12 +33,7 @@ template<typename To, typename From>
+ inline To jsCast(From* from)
+ {
+     static_assert(std::is_base_of<JSCell, typename std::remove_pointer<To>::type>::value && std::is_base_of<JSCell, typename std::remove_pointer<From>::type>::value, "JS casting expects that the types you are casting to/from are subclasses of JSCell");
+-#if (ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)) && CPU(X86_64)
+-    if (from && !from->JSCell::inherits(std::remove_pointer<To>::type::info()))
+-        reportZappedCellAndCrash(*from->JSCell::heap(), from);
+-#else
+-    ASSERT_WITH_SECURITY_IMPLICATION(!from || from->JSCell::inherits(std::remove_pointer<To>::type::info()));
+-#endif
++    // ASSERT_WITH_SECURITY_IMPLICATION(!from || from->JSCell::inherits(std::remove_pointer<To>::type::info()));
+     return static_cast<To>(from);
+ }
+ 
+diff --git a/Source/JavaScriptCore/runtime/JSObjectInlines.h b/Source/JavaScriptCore/runtime/JSObjectInlines.h
+index 3f6988545cb0..0bce6345a43b 100644
+--- a/Source/JavaScriptCore/runtime/JSObjectInlines.h
++++ b/Source/JavaScriptCore/runtime/JSObjectInlines.h
+@@ -366,7 +366,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
+     ASSERT(value);
+     ASSERT(value.isGetterSetter() == !!(newAttributes & PropertyAttribute::Accessor));
+     ASSERT(value.isCustomGetterSetter() == !!(newAttributes & PropertyAttribute::CustomAccessorOrValue));
+-    ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
++    // ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
+     ASSERT(!parseIndex(propertyName));
+ 
+     StructureID structureID = this->structureID();
+diff --git a/Source/JavaScriptCore/runtime/OptionsList.h b/Source/JavaScriptCore/runtime/OptionsList.h
+index 49f206ebff54..3667b89095ec 100644
+--- a/Source/JavaScriptCore/runtime/OptionsList.h
++++ b/Source/JavaScriptCore/runtime/OptionsList.h
+@@ -87,7 +87,7 @@ bool hasCapacityToUseLargeGigacage();
+     v(OptionString, configFile, nullptr, Normal, "file to configure JSC options and logging location"_s) \
+     \
+     v(Bool, useLLInt,  true, Normal, "allows the LLINT to be used if true"_s) \
+-    v(Bool, useJIT, jitEnabledByDefault(), Normal, "allows the executable pages to be allocated for JIT and thunks if true"_s) \
++    v(Bool, useJIT, false, Normal, "allows the executable pages to be allocated for JIT and thunks if true"_s) \
+     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
+     v(Bool, useDFGJIT, true, Normal, "allows the DFG JIT to be used if true"_s) \
+     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
+@@ -382,7 +382,7 @@ bool hasCapacityToUseLargeGigacage();
+     v(Unsigned, maxSingleAllocationSize, 0, Configurable, "debugging option to limit individual allocations to a max size (0 = limit not set, N = limit size in bytes)"_s) \
+     \
+     v(GCLogLevel, logGC, GCLogging::None, Normal, "debugging option to log GC activity (0 = None, 1 = Basic, 2 = Verbose)"_s) \
+-    v(Bool, useGC, true, Normal, nullptr) \
++    v(Bool, useGC, false, Normal, nullptr) \
+     v(Bool, useGlobalGC, false, Normal, nullptr) \
+     v(Bool, gcAtEnd, false, Normal, "If true, the jsc CLI will do a GC before exiting"_s) \
+     v(Bool, forceGCSlowPaths, false, Normal, "If true, we will force all JIT fast allocations down their slow paths."_s) \
+@@ -470,7 +470,7 @@ bool hasCapacityToUseLargeGigacage();
+     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
+     v(Bool, useAirOptimizePairedLoadStore, true, Normal, nullptr) \
+     \
+-    v(Bool, useDollarVM, false, Restricted, "installs the $vm debugging tool in global objects"_s) \
++    v(Bool, useDollarVM, true, Normal, "installs the $vm debugging tool in global objects"_s) \
+     v(OptionString, functionOverrides, nullptr, Restricted, "file with debugging overrides for function bodies"_s) \
+     \
+     v(Unsigned, watchdog, 0, Normal, "watchdog timeout (0 = Disabled, N = a timeout period of N milliseconds)"_s) \
+diff --git a/Source/JavaScriptCore/runtime/StructureID.h b/Source/JavaScriptCore/runtime/StructureID.h
+index 72e91b816d63..f46f449e08cb 100644
+--- a/Source/JavaScriptCore/runtime/StructureID.h
++++ b/Source/JavaScriptCore/runtime/StructureID.h
+@@ -129,7 +129,7 @@ ALWAYS_INLINE StructureID StructureID::encode(const Structure* structure)
+ ALWAYS_INLINE Structure* StructureID::decode() const
+ {
+     // Take care to only use the bits from m_bits in the structure's address reservation.
+-    ASSERT(decontaminate());
++    // ASSERT(decontaminate());
+     return reinterpret_cast<Structure*>((static_cast<uintptr_t>(decontaminate().m_bits) & structureIDMask) + startOfStructureHeap());
+ }
+ 
+diff --git a/Source/JavaScriptCore/tools/JSDollarVM.cpp b/Source/JavaScriptCore/tools/JSDollarVM.cpp
+index fa1406a81a3d..4be7d5ba07c4 100644
+--- a/Source/JavaScriptCore/tools/JSDollarVM.cpp
++++ b/Source/JavaScriptCore/tools/JSDollarVM.cpp
+@@ -4129,6 +4129,102 @@ JSC_DEFINE_HOST_FUNCTION(functionCachedCallFromCPP, (JSGlobalObject* globalObjec
+     return JSValue::encode(jsUndefined());
+ }
+ 
++JSC_DEFINE_HOST_FUNCTION(functionAddrOf, (JSGlobalObject* globalObject, CallFrame* callFrame))
++{
++    DollarVMAssertScope assertScope;
++    VM& vm = globalObject->vm();
++    JSLockHolder lock(vm);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
++    if (!callFrame->argumentCount() || callFrame->argumentCount() > 2 || !callFrame->argument(0).isCell())
++        return encodedJSUndefined();
++
++    bool verbose = false;
++    if (callFrame->argumentCount() > 1 && !callFrame->argument(1).isBoolean())
++        return encodedJSUndefined();
++
++    if (callFrame->argumentCount() > 1 && callFrame->argument(1).asBoolean())
++        verbose = true;
++
++    auto* o = callFrame->argument(0).asCell();
++    dataLogLnIf(verbose, "AddrOf: ", RawPointer(o), " ", *o);
++
++    return JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, reinterpret_cast<uint64_t>(o)));
++}
++
++JSC_DEFINE_HOST_FUNCTION(functionFakeObj, (JSGlobalObject* globalObject, CallFrame* callFrame))
++{
++    DollarVMAssertScope assertScope;
++    VM& vm = globalObject->vm();
++    JSLockHolder lock(vm);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++
++    if (!callFrame->argumentCount() || callFrame->argumentCount() > 2 || !callFrame->argument(0).isBigInt())
++        return encodedJSUndefined();
++
++    bool verbose = false;
++    if (callFrame->argumentCount() > 1 && !callFrame->argument(1).isBoolean())
++        return encodedJSUndefined();
++
++    if (callFrame->argumentCount() > 1 && callFrame->argument(1).asBoolean())
++        verbose = true;
++
++    auto i = callFrame->argument(0).toBigInt64(globalObject);
++    auto o = bitwise_cast<JSCell*>(i);
++    dataLogLnIf(verbose, "FakeObj: ", RawHex(i));
++
++    return JSValue::encode(o);
++}
++
++JSC_DEFINE_HOST_FUNCTION(functionRead64, (JSGlobalObject* globalObject, CallFrame* callFrame))
++{
++    DollarVMAssertScope assertScope;
++    VM& vm = globalObject->vm();
++    JSLockHolder lock(vm);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (!callFrame->argumentCount() || callFrame->argumentCount() > 2 || !callFrame->argument(0).isBigInt())
++        return encodedJSUndefined();
++
++    bool verbose = false;
++    if (callFrame->argumentCount() > 1 && !callFrame->argument(1).isBoolean())
++        return encodedJSUndefined();
++
++    if (callFrame->argumentCount() > 1 && callFrame->argument(1).asBoolean())
++        verbose = true;
++
++    uint64_t i = callFrame->argument(0).toBigInt64(globalObject);
++    dataLogLnIf(verbose, "Read64: ", RawHex(i));
++    uint64_t* ptr = bitwise_cast<uint64_t*>(i);
++    dataLogLnIf(verbose, "Read64: ", RawHex(i), " -> ", RawHex(*ptr), " / ", *ptr);
++
++    return JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *ptr));
++}
++
++JSC_DEFINE_HOST_FUNCTION(functionWrite64, (JSGlobalObject* globalObject, CallFrame* callFrame))
++{
++    DollarVMAssertScope assertScope;
++    VM& vm = globalObject->vm();
++    JSLockHolder lock(vm);
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (!callFrame->argumentCount() || callFrame->argumentCount() > 3 || !callFrame->argument(0).isBigInt() || !callFrame->argument(1).isBigInt())
++        return encodedJSUndefined();
++
++    bool verbose = false;
++    if (callFrame->argumentCount() > 2 && !callFrame->argument(2).isBoolean())
++        return encodedJSUndefined();
++
++    if (callFrame->argumentCount() > 2 && callFrame->argument(2).asBoolean())
++        verbose = true;
++
++    uint64_t i = callFrame->argument(0).toBigInt64(globalObject);
++    uint64_t v = callFrame->argument(1).toBigInt64(globalObject);
++    dataLogLnIf(verbose, "Write64: ", RawHex(i), " <- ", RawHex(v), " / ", v);
++    uint64_t* ptr = bitwise_cast<uint64_t*>(i);
++    *ptr = v;
++
++    return JSValue::encode(jsBoolean(true));
++}
++
+ constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
+ 
+ void JSDollarVM::finishCreation(VM& vm)
+@@ -4147,6 +4243,11 @@ void JSDollarVM::finishCreation(VM& vm)
+         JSDollarVM::addConstructibleFunction(vm, globalObject, name, function, arguments);
+     };
+ 
++    addFunction(vm, "addrOf"_s, functionAddrOf, 2);
++    addFunction(vm, "fakeObj"_s, functionFakeObj, 2);
++    addFunction(vm, "read64"_s, functionRead64, 2);
++    addFunction(vm, "write64"_s, functionWrite64, 3);
++
+     addFunction(vm, "abort"_s, functionCrash, 0);
+     addFunction(vm, "crash"_s, functionCrash, 0);
+     addFunction(vm, "breakpoint"_s, functionBreakpoint, 0);
+diff --git a/Source/JavaScriptCore/tools/VMInspector.cpp b/Source/JavaScriptCore/tools/VMInspector.cpp
+index c14752f80777..fba74522fc13 100644
+--- a/Source/JavaScriptCore/tools/VMInspector.cpp
++++ b/Source/JavaScriptCore/tools/VMInspector.cpp
+@@ -598,7 +598,6 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
+         out.print("\n");
+     };
+ 
+-    out.printf("<%p, %s>\n", cell, cell->className().characters());
+     IndentationScope scope(indentation);
+ 
+     INDENT dumpSlot(slots, 0, "header");
+@@ -615,12 +614,15 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
+     if (cell->isObject()) {
+         JSObject* obj = static_cast<JSObject*>(const_cast<JSCell*>(cell));
+         Butterfly* butterfly = obj->butterfly();
+-        size_t butterflySize = obj->butterflyTotalSize();
++
++        // size_t butterflySize = obj->butterflyTotalSize();
+ 
+         INDENT dumpSlot(slots, slotIndex, "butterfly");
+         slotIndex++;
+ 
+-        if (butterfly) {
++        if (butterfly && reinterpret_cast<ptrdiff_t>(butterfly) < static_cast<ptrdiff_t>(0x20)) {
++            INDENT out.println("INVALID BUTTERFLY ", format("%p", butterfly));
++        } else if (butterfly) {
+             IndentationScope scope(indentation);
+ 
+             bool hasIndexingHeader = structure->hasIndexingHeader(cell);
+@@ -635,10 +637,10 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
+ 
+             unsigned publicLength = butterfly->publicLength();
+             unsigned vectorLength = butterfly->vectorLength();
+-            size_t butterflyCellSize = MarkedSpace::optimalSizeFor(butterflySize);
++            // size_t butterflyCellSize = MarkedSpace::optimalSizeFor(butterflySize);
+ 
+-            size_t endOfIndexedPropertiesIndex = butterflySize / sizeof(EncodedJSValue);
+-            size_t endOfButterflyIndex = butterflyCellSize / sizeof(EncodedJSValue);
++            // size_t endOfIndexedPropertiesIndex = butterflySize / sizeof(EncodedJSValue);
++            // size_t endOfButterflyIndex = butterflyCellSize / sizeof(EncodedJSValue);
+ 
+             INDENT out.println("base ", RawPointer(base));
+             INDENT out.println("hasIndexingHeader ", (hasIndexingHeader ? "YES" : "NO"), " hasAnyArrayStorage ", (hasAnyArrayStorage ? "YES" : "NO"));
+@@ -686,8 +688,17 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
+                     index = dumpSection(index, index + 2, "arrayStorage");
+                 }
+ 
+-                index = dumpSection(index, endOfIndexedPropertiesIndex, "indexedProperties");
+-                index = dumpSection(index, endOfButterflyIndex, "unallocated capacity");
++                // index = dumpSection(index, endOfIndexedPropertiesIndex, "indexedProperties");
++                // index = dumpSection(index, endOfButterflyIndex, "unallocated capacity");
++            }
++        }
++
++        if (auto* fn = jsDynamicCast<JSFunction*>(obj)) {
++            auto* exec = fn->executable();
++            out.println("FUNCTION: ", RawPointer(exec));
++            if (exec && jsDynamicCast<const ScriptExecutable*>(exec) && exec->hasJITCodeForCall()) {
++                out.println("EXECUTABLE: ", RawPointer(exec->generatedJITCodeForCall().ptr()));
++                out.println("EXECUTABLE ADDRESS: ", RawPointer(exec->generatedJITCodeForCall()->executableAddress()));
+             }
+         }
+     }
+diff --git a/Source/WTF/wtf/PlatformEnable.h b/Source/WTF/wtf/PlatformEnable.h
+index b93a5cbfbdf7..44dc25ddd97a 100644
+--- a/Source/WTF/wtf/PlatformEnable.h
++++ b/Source/WTF/wtf/PlatformEnable.h
+@@ -466,12 +466,7 @@
+ #define ENABLE_SEC_ITEM_SHIM 0
+ #endif
+ 
+-#if !defined(ENABLE_SECURITY_ASSERTIONS)
+-/* Enable security assertions on all ASAN builds and debug builds. */
+-#if ASAN_ENABLED || !defined(NDEBUG)
+-#define ENABLE_SECURITY_ASSERTIONS 1
+-#endif
+-#endif
++#define ENABLE_SECURITY_ASSERTIONS 0
+ 
+ #if !defined(ENABLE_SEPARATED_WX_HEAP)
+ #define ENABLE_SEPARATED_WX_HEAP 0
+diff --git a/Source/bmalloc/bmalloc/Gigacage.h b/Source/bmalloc/bmalloc/Gigacage.h
+index 6baadaa4be29..a1528d2fbba3 100644
+--- a/Source/bmalloc/bmalloc/Gigacage.h
++++ b/Source/bmalloc/bmalloc/Gigacage.h
+@@ -42,7 +42,7 @@
+ 
+ #if ((BOS(DARWIN) || BOS(LINUX)) && \
+     (BCPU(X86_64) || (BCPU(ARM64) && !defined(__ILP32__) && (!BPLATFORM(IOS_FAMILY) || BPLATFORM(IOS)))))
+-#define GIGACAGE_ENABLED 1
++#define GIGACAGE_ENABLED 0
+ #else
+ #define GIGACAGE_ENABLED 0
+ #endif
