@@ -196,7 +196,7 @@
         }
 
         const query_args = get_query_arguments();
-        const host = query_args["cdn"] || (ON_LOCALHOST ? "//localhost:8080/images/" : "//jmichaud.pages.igalia.com/js-ctf-data/images/");
+        const host = query_args["cdn"] || (ON_LOCALHOST ? "//localhost:8080/images/" : "//people.igalia.com/jmichaud/js-ctf-data/images/");
 
         // Abandonware OS images are from https://winworldpc.com/library/operating-systems
         var oses = [
