@@ -167,7 +167,7 @@ function asDouble(v) {
 
     var container = {
         jsCellHeader: asDouble(0x10824070051d8a0n), // SKIP 1: See article about how to make structure id oracle.
-        butterfly: fakeObj(addrOf(hax) + 4n),
+        butterfly: fakeObj(addrOf(hax) + 8n),
         vector: false,
         lengthAndFlags: false
     };
