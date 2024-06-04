@@ -201,6 +201,24 @@
         // Abandonware OS images are from https://winworldpc.com/library/operating-systems
         var oses = [
             {
+                id: "debian",
+                name: "debian",
+                memory_size: 512 * 1024 * 1024,
+                vga_memory_size: 8 * 1024 * 1024,
+                screen_container: document.getElementById("screen_container"),
+                bios: { url: "../bios/seabios.bin" },
+                vga_bios: { url: "../bios/vgabios.bin" },
+                filesystem: {
+                    baseurl: host + "debian-9p-rootfs-flat",
+                    basefs: host + "debian-base-fs.json",
+                    async: false,
+                },
+                autostart: true,
+                bzimage_initrd_from_filesystem: true,
+                cmdline: "rw init=/bin/systemd root=host9p console=ttyS0 spectre_v2=off pti=off",
+                state: { url: host + "debian-state-base.bin" },
+            },
+            {
                 id: "ctf0",
                 name: "ctf0",
                 memory_size: 512 * 1024 * 1024,
@@ -253,6 +271,24 @@
                 bzimage_initrd_from_filesystem: true,
                 cmdline: "rw init=/bin/systemd root=host9p console=ttyS0 spectre_v2=off pti=off",
                 state: { url: host + "ctf2.bin" },
+            },
+            {
+                id: "soln",
+                name: "soln",
+                memory_size: 512 * 1024 * 1024,
+                vga_memory_size: 8 * 1024 * 1024,
+                screen_container: document.getElementById("screen_container"),
+                bios: { url: "../bios/seabios.bin" },
+                vga_bios: { url: "../bios/vgabios.bin" },
+                filesystem: {
+                    baseurl: host + "debian-9p-rootfs-flat",
+                    basefs: host + "debian-base-fs.json",
+                    async: false,
+                },
+                autostart: true,
+                bzimage_initrd_from_filesystem: true,
+                cmdline: "rw init=/bin/systemd root=host9p console=ttyS0 spectre_v2=off pti=off",
+                state: { url: host + "soln.bin" },
             },
             {
                 id: "debian-boot",
