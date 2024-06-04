@@ -93,7 +93,8 @@ function derefAssign(o, field, val) {
 if (verbose)
     $vm.dumpRegisters()
 
-let stack = deref(globalThis, "JSGlobalProxy::m_target.JSGlobalObject::m_vm.VM::topEntryFrame")
+let stack = 0
+// FILL IN THIS!
 p("A stack address:")
 hd(stack)
 

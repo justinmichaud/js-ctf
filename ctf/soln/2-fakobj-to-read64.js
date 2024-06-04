@@ -368,7 +368,10 @@ function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
     //$vm.crash()
 
     p("Found non-cloop ret pc at:") // I searched in GDB for this offset
-    let retPC = myStack - 0xb31fff30n + 0xbfffedbcn
+    // My stack: 0xb37f5ff8n
+    // gdb> f 8; x/wx $sp-4
+    // 0xbffffb5cn: [a valid return pc]
+    let retPC = myStack - 0xb37f5f30n + 0xbffff4ecn
     hd(retPC)
 
     let retPCVal = read64(retPC)

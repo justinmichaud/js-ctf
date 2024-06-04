@@ -6,27 +6,15 @@ RUN apt update && \
     apt --yes --no-install-recommends install \
         linux-image-686 grub2 systemd \
         libterm-readline-perl-perl \
-        gcc make libc6-dev \
-        unzip bzip2 xz-utils \
-        fluxbox \
+        libc6-dev \
+        unzip \
         tmux \
-        xserver-xorg-input-kbd xserver-xorg-input-mouse xserver-xorg-input-evdev \
-        xserver-xorg-video-fbdev xserver-xorg-video-vesa \
-        xserver-xorg x11-xserver-utils xinit dbus-x11 \
-        libc-l10n locales \
-        fonts-noto fonts-droid-fallback \
-        strace file xterm vim apt-file \
         vim \
         gdb \
         dhcpcd5 \
-        wget curl \
         net-tools netcat \
-        wmctrl xdotool \
-        mesa-utils libgl1-mesa-dri \
     && \
     touch /root/.Xdefaults && \
-    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && \
-    locale-gen && \
     echo 'LANG="en_US.UTF-8"' > /etc/default/locale && \
     chsh -s /bin/bash && \
     echo "root:root" | chpasswd && \
@@ -38,14 +26,8 @@ RUN apt update && \
     systemctl disable apt-daily.timer && \
     systemctl disable apt-daily-upgrade.timer && \
     systemctl disable dhcpcd.service && \
-    echo "tmpfs /tmp tmpfs nodev,nosuid 0 0" >> /etc/fstab && \
-    cd /root/ && \
-    wget http://www.math.utah.edu/~mayer/linux/nbench-byte-2.2.3.tar.gz && \
-    tar xfv nbench-byte-2.2.3.tar.gz && \
-    rm nbench-byte-2.2.3.tar.gz && \
-    mv nbench-byte-2.2.3 bench && \
-    cd bench && \
-    make
+    echo "tmpfs /tmp tmpfs nodev,nosuid 0 0" >> /etc/fstab \
+
 
 COPY getty-noclear.conf getty-override.conf /etc/systemd/system/getty@tty1.service.d/
 COPY getty-autologin-serial.conf /etc/systemd/system/serial-getty@ttyS0.service.d/
@@ -78,10 +60,17 @@ RUN apt update
 RUN apt install libc6 libc6-dev libc6-dbg --yes
 
 RUN echo "echo 0 | tee /proc/sys/kernel/randomize_va_space" >> ~/.bashrc
+RUN echo "setarch i686 -R /bin/bash"> /root/shell.sh; chmod +x /root/shell.sh
+
 RUN echo "LD_LIBRARY_PATH=/root gdb --args /root/jsc 0*.js"> /root/debug.sh; chmod +x /root/debug.sh
+RUN echo "LD_LIBRARY_PATH=/root  /root/jsc 0*.js"> /root/run.sh; chmod +x /root/run.sh
+
+RUN echo "LD_LIBRARY_PATH=/root /root/jsc soln/0*.js"> /root/run-0.sh; chmod +x /root/run-0.sh
+RUN echo "LD_LIBRARY_PATH=/root gdb --args /root/jsc soln/0*.js"> /root/debug-0.sh; chmod +x /root/debug-0.sh
+RUN echo "LD_LIBRARY_PATH=/root /root/jsc soln/1*.js"> /root/run-1.sh; chmod +x /root/run-1.sh
+RUN echo "LD_LIBRARY_PATH=/root gdb --args /root/jsc soln/1*.js"> /root/debug-1.sh; chmod +x /root/debug-1.sh
 RUN echo "LD_LIBRARY_PATH=/root /root/jsc soln/2*.js"> /root/run-2.sh; chmod +x /root/run-2.sh
 RUN echo "LD_LIBRARY_PATH=/root gdb --args /root/jsc soln/2*.js"> /root/debug-2.sh; chmod +x /root/debug-2.sh
-RUN echo "LD_LIBRARY_PATH=/root  /root/jsc 0*.js"> /root/run.sh; chmod +x /root/run.sh
 
 # RUN rm -f /root/libicudata.so.72
 # RUN rm -f /root/libicuuc.so.72

@@ -1,14 +1,14 @@
 # CTF
 
-Go here: https://justinmichaud.com/js-ctf/v86-master/?profile=debian
+Go here: https://justinmichaud.com/js-ctf/v86-master/?profile=ctf0
 
 Then, some commands to help you:
 
 ```
 ./run.sh
 ./debug.sh
-vi ./run.sh
-vi 0*
+vim ./run.sh
+vim 0*
 ```
 
 # 0-intro.js
@@ -17,7 +17,7 @@ Change the file so that calling B really calls A
 
 # 1-*.js
 
-Prove that rop is possible by overwriting returnPC (note: cloop makes this impossible, TODO)
+Prove that rop is possible by overwriting returnPC
 
 # 2-*.js
 
