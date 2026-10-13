@@ -1,5 +1,7 @@
 # CTF
 
+![screenshot](https://github.com/justinmichaud/js-ctf/blob/fefe8a92f81b1b5eb69c7e16cd7646671a5b2a25/Screenshot%202026-10-13%20at%2017.13.01.png)
+
 Go here: https://justinmichaud.com/js-ctf/v86-master/?profile=ctf0
 
 Then, some commands to help you:
